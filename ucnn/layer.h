@@ -137,19 +137,25 @@ public:
 #ifdef INCLUDE_TRAINING_CODE
 	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1) 
 	{
-		for(int t=0; t<top.delta.size(); t++)	
-			for(int b=0; b<delta.size(); b++)	
-				top.delta.x[t] += delta.x[b]*w.x[t+b*w.cols];
+		const int w_cols = w.cols;
+		for (int b = 0; b < delta.size(); b++)
+		{
+			const float cb = delta.x[b];
+			for (int t = 0; t < top.delta.size(); t++) top.delta.x[t] += cb*w.x[t + b*w_cols];
+		}
 	}
 
-	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int threads=1)
+	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int threads = 1)
 	{
-		const float *bottom =delta.x; const int sizeb=delta.size();
-		const float *top =top_layer.node.x; const int sizet=top_layer.node.size();
-		dw.resize(sizet, sizeb,1);
-		for(int b=0; b<sizeb; b++) 
-			for(int t=0; t<sizet; t++)
-				dw.x[t+b*sizet]=top[t]*bottom[b];	
+		const float *bottom = delta.x; const int sizeb = delta.size();
+		const float *top = top_layer.node.x; const int sizet = top_layer.node.size();
+		dw.resize(sizet, sizeb, 1);
+
+		for (int b = 0; b < sizeb; b++)
+		{
+			const float cb = bottom[b];
+			for (int t = 0; t < sizet; t++)	dw.x[t + b*sizet] = top[t] * cb;
+		}
 	}
 #endif
 
@@ -162,16 +168,20 @@ public:
 class max_pooling_layer : public base_layer
 {
 	int _pool_size;
+	int _stride;
 	// uses a map to connect pooled result to top layer
 	std::vector<int> _max_map;
 public:
-	int stride;
-	max_pooling_layer(const char *layer_name, int pool_size, activation_function *p=NULL ) : base_layer(layer_name, 1) 
+	max_pooling_layer(const char *layer_name, int pool_size, activation_function *p = NULL) : base_layer(layer_name, 1)
 	{
-		p_act=p; stride=pool_size; _pool_size=pool_size; p_act=new_activation_function("identity"); //layer_type=pool_type;
+		p_act = p; _stride = pool_size; _pool_size = pool_size; p_act = new_activation_function("identity"); //layer_type=pool_type;
+	}
+	max_pooling_layer(const char *layer_name, int pool_size, int stride, activation_function *p=NULL ) : base_layer(layer_name, 1)
+	{
+		p_act=p; _stride= stride; _pool_size=pool_size; p_act=new_activation_function("identity"); //layer_type=pool_type;
 	}
 	virtual  ~max_pooling_layer(){}
-	virtual std::string get_config_string() {std::string str="max_pool "+int2str(_pool_size)+"\n"; return str;}
+	virtual std::string get_config_string() {std::string str="max_pool "+int2str(_pool_size) + int2str(_stride) +"\n"; return str;}
 
 	// ToDo would like delayed activation of conv layer if available
 	virtual void activate_nodes(){ return;}
@@ -186,17 +196,24 @@ public:
 	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int threads=1) {}
 	virtual matrix * new_connection(base_layer &top, int weight_mat_index)
 	{
-			// wasteful to add weight matrix (1x1x1), but makes other parts of code more OO
-			// bad will happen if try to put more than one pool layer
-			top.forward_linked_layers.push_back(std::make_pair(weight_mat_index,this));
-			int pool_size=stride;
-			
+		// wasteful to add weight matrix (1x1x1), but makes other parts of code more OO
+		// bad will happen if try to put more than one pool layer
+		top.forward_linked_layers.push_back(std::make_pair(weight_mat_index,this));
+		int pool_size= _pool_size;
+		int w = (top.node.cols) / pool_size;
+		int h = (top.node.rows) / pool_size;
+		if (_stride != _pool_size)
+		{
+			w = 1+((top.node.cols - _pool_size) / _stride);
+			h = 1+((top.node.rows - _pool_size) / _stride);
+		}
+					
 //			resize((top.node.cols-2*pad_cols)/pool_size, (top.node.rows-2*pad_rows)/pool_size, top.node.chans);
-			resize((top.node.cols)/pool_size, (top.node.rows)/pool_size, top.node.chans);
+		resize(w,h, top.node.chans);
 #ifdef INCLUDE_TRAINING_CODE
-			backward_linked_layers.push_back(std::make_pair(weight_mat_index,&top));
+		backward_linked_layers.push_back(std::make_pair(weight_mat_index,&top));
 #endif
-			return new matrix(1,1,1);
+		return new matrix(1,1,1);
 	}
 
 	// this is downsampling
@@ -212,9 +229,9 @@ public:
 		for(int k=0; k<top.node.chans; k++)
 		{
 			
-			for(int j=0; j<top.node.rows; j+=stride)
+			for(int j=0; j<=top.node.rows- _pool_size; j+= _stride)
 			{
-				for(int i=0; i<top.node.cols; i+=stride)
+				for(int i=0; i<=top.node.cols- _pool_size; i+= _stride)
 				{
 					const int base_index=i+(j)*jstep+k*kstep;
 					int max_i=base_index;
@@ -272,9 +289,9 @@ public:
 					
 					{
 						// speed up with optimized size version
-						for(int jj=0; jj<pool_y; jj+=1)
+						for(int jj=0; jj<pool_y; jj+= _stride)
 						{
-							for(int ii=0; ii<pool_x; ii+=1)
+							for(int ii=0; ii<pool_x; ii+= _stride)
 							{
 								int index=i+ii+(j+jj)*jstep+k*kstep;
 								if(max<top_node[index])
@@ -303,7 +320,6 @@ public:
 	}
 #endif
 };
-
 
 //----------------------------------------------------------------------------------------------------------
 // F R A C T I O N A L    M A X   P O O L I N G   
@@ -483,13 +499,14 @@ public:
 #endif
 
 };
+
 //----------------------------------------------------------------------------------------------------------
 // C O N V O L U T I O N   
 //
 class convolution_layer : public base_layer
 {
+	int _stride;
 public:
-	int stride;
 	int kernel_rows;
 	int kernel_cols;
 	int maps;
@@ -498,7 +515,7 @@ public:
 
 	convolution_layer(const char *layer_name, int _w, int _h, int _c, activation_function *p ) : base_layer(layer_name, _w, _h, _c) 
 	{
-		p_act=p; stride=1; kernel_rows=_h; kernel_cols=_w; maps=_c;kernels_per_map=0; pad_cols = kernel_cols-1; pad_rows = kernel_rows-1;
+		p_act=p; _stride =1; kernel_rows=_h; kernel_cols=_w; maps=_c;kernels_per_map=0; pad_cols = kernel_cols-1; pad_rows = kernel_rows-1;
 	}
 	virtual  ~convolution_layer(){}
 
@@ -559,6 +576,7 @@ public:
 		const int top_chans = top.node.chans;
 		const int map_cnt=maps;
 		const int w_size = kernel_cols;
+		const int stride = _stride;
 		//const int node_size =top.node.rows-kernel_rows;
 			
 		//const int top_delta_size = top.delta.rows;
@@ -567,7 +585,8 @@ public:
 
 		if(kernel_rows==5)
 		{
-			/*
+	
+	/*
 			af::array af_top(top.node.cols, top.node.rows, top.node.chans, top.node.x, afHost);
 			af::array af_top_unwrap=af::unwrap(af_top,5,5,1,1);
 			af::array af_w(w.cols*w.rows, kernels_per_map*maps, w.x, afHost);
@@ -612,15 +631,16 @@ public:
 				{
 					_w=&w.x[(map+k*maps)*kernel_size];
 
-					for(int j=0; j<node_size; j+=1)//stride) // input h 
+					for(int j=0; j<node_size; j+= stride)//stride) // input h 
 					{
-						for(int i=0; i<node_size; i+=1)//stride) // intput w
+						for(int i=0; i<node_size; i+= stride)//stride) // intput w
 						{
 							//float v=0;
 							const float v=unwrap_2d_dot_5x5(_top_node+i+j*jstep,_w,	jstep,w_size);
 							node.x[i+(j)*node_size +map_size*map]+= v;
 						}
 					}
+
 				}
 			}
 		}
@@ -632,8 +652,8 @@ public:
 				for(int map=0; map<map_cnt; map++) // how many maps  maps= node.chans
 				{
 					_w=&w.x[(map+k*maps)*kernel_size];
-					for(int j=0; j<node_size; j+=1)//stride) // input h 
-						for(int i=0; i<node_size; i+=1)//stride) // intput w
+					for(int j=0; j<node_size; j+= stride)//stride) // input h 
+						for(int i=0; i<node_size; i+= stride)//stride) // intput w
 						{
 							//float v=0;
 							const float v=unwrap_2d_dot_3x3(
@@ -650,8 +670,8 @@ public:
 				for(int k=0; k<top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
 				{
 
-					for(int j=0; j<node_size; j+=stride) // input h 
- 						for(int i=0; i<node_size; i+=stride) // intput w
+					for(int j=0; j<node_size; j+= stride) // input h 
+ 						for(int i=0; i<node_size; i+= stride) // intput w
 				
 							node.x[i+(j)*node.cols +map_size*map]+= 
 								unwrap_2d_dot(
@@ -659,14 +679,12 @@ public:
 									&w.x[(map+k*maps)*kernel_size],
 									kernel_cols,
 									jstep,kernel_cols);
-								
+					
 				}
 
 			} //k
 		} // all maps=chans
 			
-			
-	
 	}
 
 
@@ -720,13 +738,7 @@ public:
 		}
 		else if(kernel_cols==3)					
 		{
-			const float *_w = w.x;
-			const float *_delta;
-			const int w_size = kernel_cols;
-			const int delta_size = delta_pad.cols;
-			const int map_cnt=maps;
-			const int top_delta_size = top.delta.rows;
-			const int top_delta_chans = top.delta.chans;
+
 			for(int k=0; k<top_delta_chans; k++) // input channels --- same as kernels_per_map - kern for each input
 			{
 				_w=& w.x[k*maps*kernel_size];
@@ -753,9 +765,9 @@ public:
 		else
 		{
 
-			for(int j=0; j<top.delta.rows; j+=stride) // input h 
+			for(int j=0; j<top.delta.rows; j+=1) // input h 
 			{
-				for(int i=0; i<top.delta.cols; i+=stride) // intput w
+				for(int i=0; i<top.delta.cols; i+=1) // intput w
 				{
 					for(int k=0; k<top.delta.chans; k++) // input channels --- same as kernels_per_map - kern for each input
 					{
@@ -917,7 +929,7 @@ base_layer *new_layer(const char *layer_name, const char *config)
 	std::istringstream iss(config); 
 	std::string str;
 	iss>>str;
-	int w,h,c;
+	int w,h,c,s;
 	if(str.compare("input")==0)
 	{
 		iss>>w; iss>>h; iss>>c;
@@ -931,8 +943,11 @@ base_layer *new_layer(const char *layer_name, const char *config)
 	}
 	else if(str.compare("max_pool")==0)
 	{
-		iss>>c; 
-		return new max_pooling_layer(layer_name, c);
+		iss >> c;  iss >> s;
+		if(s>0 && s<=c)
+			return new max_pooling_layer(layer_name, c, s);
+		else
+			return new max_pooling_layer(layer_name, c);
 	}
 	else if(str.compare("fractional_max_pool")==0)
 	{
