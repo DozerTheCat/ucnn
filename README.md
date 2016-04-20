@@ -5,7 +5,7 @@ A fairly bare bones CNN implementation that was built with the goal to balance h
 
 μCNN includes the standard MNIST and CIFAR-10 examples. Laptop CPU training  gives 99% accuracy on MNIST in about 52secs of training using both cores. The Windows executable size is around 100KB.
 
-It was only tested with MS Developer Studio 2010, but it should be fairly portable with little work. 
+It was tested with MS Developer Studio 2010 and 2015. It should be fairly portable with little work. 
 
 Features Supported:
 + Layers:  Input, Fully Connected, Convolution, Max Pool, Fractional Max Pool (in progress), Concatenation (in progress)
