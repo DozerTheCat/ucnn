@@ -30,6 +30,7 @@
 #include <iostream> // cout
 #include <sstream>
 #include <map>
+#include <vector>
 
 #include "activation.h"
 #include "layer.h"
@@ -72,6 +73,7 @@ class network
 	int _thread_count; // determines number of layer sets (copys of layers)
 	int _batch_size;   // determines number of dW sets 
 	float _skip_energy_level;
+	std::vector <float> _running_E;
 	optimizer *_optimizer;
 	const int MAIN_LAYER_SET;
 	const int BATCH_RESERVED, BATCH_FREE, BATCH_COMPLETE;
@@ -98,7 +100,7 @@ public:
 	std::map<std::string, int> layer_map; 
 	// these are the weights between layers (not stored in the layer cause I look at them as the graph in the net)
 	std::vector<matrix *> W;
-
+	double _running_sum_E;
 	std::vector< std::vector<matrix>> dW_sets; // only for training, will have _batch_size of these
 	std::vector< std::vector<matrix>> dbias_sets; // only for training, will have _batch_size of these
 	std::vector< unsigned char > batch_open; // only for training, will have _batch_size of these
@@ -115,7 +117,7 @@ public:
 		dW_sets.resize(_batch_size);
 		dbias_sets.resize(_batch_size);
 		batch_open.resize(_batch_size);
-
+		_running_sum_E = 0.;
 		init_lock();
 
 #ifdef USE_AF
@@ -139,7 +141,7 @@ public:
 			layer_sets.clear();
 		}
 		layer_sets.clear();
-//		__for__(auto w __in__ W) delete w;  
+		__for__(auto w __in__ W) delete w;  
 		W.clear();
 		layer_map.clear();
 		layer_graph.clear();
@@ -165,11 +167,6 @@ public:
 		if (layer_cnt<_thread_count) 
 		{
 			layer_sets.resize(_thread_count);
-//			for(int i=layer_cnt; i<_thread_count; i++)
-//			{
-//				std::vector<base_layer *> layer_set;
-//				layer_sets.push_back(layer_set);
-//			}
 		}
 		// ToDo: add shrink back /  else if(layer_cnt>_thread_count)
 		sync_layer_sets();
@@ -247,7 +244,8 @@ public:
 				int w_index = (int)link.first;
 
 				if(batch_open[0]==BATCH_FREE) dW_sets[0][w_index].fill(0);
-				for(int b=0; b< _batch_size; b++)
+				
+				for(int b=1; b< _batch_size; b++)
 				{
 					if(batch_open[b]==BATCH_COMPLETE)
 						dW_sets[0][w_index]+=dW_sets[b][w_index];
@@ -256,7 +254,7 @@ public:
 			if( dynamic_cast<convolution_layer*> (layer) != NULL)  continue;
 			
 			if(batch_open[0]==BATCH_FREE) dbias_sets[0][k].fill(0);
-			for(int b=0; b< _batch_size; b++)
+			for(int b=1; b< _batch_size; b++)
 			{
 				if(batch_open[b]==BATCH_COMPLETE)
 					dbias_sets[0][k]+=dbias_sets[b][k];
@@ -270,19 +268,18 @@ public:
 			__for__ (auto &link __in__ layer->backward_linked_layers)
 			{
 				int w_index = (int)link.first;
-				_optimizer->increment_w( W[w_index],w_index,  dW_sets[0][w_index]);  // -- 10%
+				if(dW_sets[0][w_index].size()>0)
+					_optimizer->increment_w( W[w_index],w_index,  dW_sets[0][w_index]);  // -- 10%
 			}
 			if( dynamic_cast<convolution_layer*> (layer) != NULL)  continue;
 			for(int j=0; j<layer->bias.size(); j++)
 				layer->bias.x[j] -= dbias_sets[0][k].x[j]* _optimizer->learning_rate;
 		}
 
-
 		// start over
 		reset_mini_batch();
 		//_batch_index=0;
 		sync_layer_sets();
-
 
 	}
 
@@ -573,35 +570,38 @@ public:
 	// note y = f(x*w)
 	// dE = (target-y)*dy/dw = (target-y)*df/dw = (target-y)*df/dx* dx/dw = (target-y) * df * y_prev  
 
-	bool train(float *in, float *target, int _thread_number=-1)
+// ===========================================================================
+// training part
+// ===========================================================================
+	bool train(float *in, float *target, int _thread_number = -1)
 	{
-		if (_optimizer==NULL) throw;
+		if (_optimizer == NULL) throw;
 		//_optimizer->reset();
 
-		if(_thread_number<0) _thread_number=get_thread_num();
+		if (_thread_number < 0) _thread_number = get_thread_num();
 
-		if(_thread_number>_thread_count) throw;
+		if (_thread_number > _thread_count) throw;
 
-		const int thread_number=_thread_number;
+		const int thread_number = _thread_number;
 
 		lock_batch();
-	
-		int my_batch_index=-3;
-		while(my_batch_index<0)
-		{
-			my_batch_index=get_next_open_batch();
 
-			if(my_batch_index>=0)
+		int my_batch_index = -3;
+		while (my_batch_index < 0)
+		{
+			my_batch_index = get_next_open_batch();
+
+			if (my_batch_index >= 0)
 			{
-				batch_open[my_batch_index]=BATCH_RESERVED;
+				batch_open[my_batch_index] = BATCH_RESERVED;
 				unlock_batch();
 				break;
 			}
-			else if(my_batch_index==-2)
+			else if (my_batch_index == -2)
 			{
 				sync_mini_batch(); // resets _batch_index to 0
-				my_batch_index=get_next_open_batch();
-				batch_open[my_batch_index]=BATCH_RESERVED;
+				my_batch_index = get_next_open_batch();
+				batch_open[my_batch_index] = BATCH_RESERVED;
 				unlock_batch();
 				break;
 			}
@@ -611,10 +611,8 @@ public:
 			lock_batch();
 		}
 
-
-
 		// run through forward to get nodes activated
-		predict(in,thread_number);  //--- 10% of time
+		predict(in, thread_number);  //--- 10% of time
 
 		// set all deltas to zero
 		__for__(auto layer __in__ layer_sets[thread_number]) layer->delta.fill(0.f);
@@ -623,24 +621,50 @@ public:
 
 		// calc delta for last layer to prop back up through network
 		// d = (target-out)* grad_activiation(out)
-		base_layer *layer = layer_sets[thread_number][layer_cnt-1];
-		float E=0;
+		base_layer *layer = layer_sets[thread_number][layer_cnt - 1];
+		float E = 0;
 		//std::vector<float> vE(layer->node.size());
-		for(int j=0; j< layer->node.size(); j++)
+		for (int j = 0; j < layer->node.size(); j++)
 		{
 			//layer->delta.x[j] =  cross_entropy::dE(layer->node.x[j],target[j]);
-			layer->delta.x[j] =  mse::dE(layer->node.x[j],target[j]);
-			float e=mse::E(layer->node.x[j],target[j]);
+			layer->delta.x[j] = mse::dE(layer->node.x[j], target[j]);
+			float e = mse::E(layer->node.x[j], target[j]);
 			//vE[j]=e;
-			E+=e;
+			E += e;
+			//std::cout << "<" << layer->node.x[j] << ">";
 		}
 		//std::sort(vE.begin(), vE.end());
 		//float dE = vE[1]-vE[0];
-		E/=(float) layer->node.size();
+		E /= (float)layer->node.size();
+		//std::cout << "skip " << _skip_energy_level <<", E " << E << ",";
+		if (0)///(_skip_energy_level > 0 && E > 0)
+		{
+#ifdef UCNN_OMP	
+			#pragma omp critical
+#endif
+		{
+			std::cout << "E " << E << ",";
+				_running_E.push_back(E);
+				int s = _running_E.size();
+				if (s >= 1000)
+				{
+					std::cout << ">100";
+					float oldE = _running_E.front();
+					//std::cout << "b " << _running_E[10] << "," << _running_E[0] << std::endl;
+				
+					std::sort(_running_E.begin(), _running_E.end());
+					int index = s *9 / 10;
+					std::cout << "e " << _running_E[s-1] << "," << _running_E[0] << std::endl;
+					if(_running_E[index]>0)
+						if (_skip_energy_level < _running_E[index]) _skip_energy_level = _running_E[index];
+					_running_E.clear();
+				}
 
-
+			}
+		}
+		
 		//std::cout << dE << "," << E<< "\n";
-		if(E<_skip_energy_level)
+		if(E>0 && E<_skip_energy_level)
 		{
 			lock_batch();
 			batch_open[my_batch_index]=BATCH_FREE;
@@ -683,6 +707,7 @@ public:
 			{
 				base_layer *p_top =link.second;
 				int w_index = (int)link.first;
+				//if (dynamic_cast<max_pooling_layer*> (layer) != NULL)  continue;
 				layer->calculate_dw(*p_top, dW_sets[my_batch_index][w_index],_thread_count);// --- 20%
 				// moved this out to sync_mini_batch();
 				//_optimizer->increment_w( W[w_index],w_index, dW_sets[_batch_index][w_index]);  // -- 10%
