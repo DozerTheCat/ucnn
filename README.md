@@ -3,7 +3,7 @@
 
 A fairly bare bones CNN implementation that was built with the goal to balance hack-ability, functionality, and speed.  It was a learning exercise inspired by tiny-cnn, which is a wonderful alternative to this code.  μCNN is only C++ with only old fashioned C tricks for optimization.  Therefore is not meant to train deep models. For that, go with Caffe, TensorFlow, CMTK, Torch, etc…  However it is still able to train usable models for many general object detection and object recognition problems.
 
-μCNN includes the standard MNIST and CIFAR-10 examples. A Laptop CPU training gives 70% accuracy on CIFAR-10 in about 30mins on a single core and 99% accuracy on MNIST in about 52secs of traing using both cores.
+μCNN includes the standard MNIST and CIFAR-10 examples. Laptop CPU training  gives 99% accuracy on MNIST in about 52secs of training using both cores. The Windows executable size is around 100KB.
 
 It was only tested with MS Developer Studio 2010, but it should be fairly portable with little work. 
 
