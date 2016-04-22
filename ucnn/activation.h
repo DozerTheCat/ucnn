@@ -121,31 +121,6 @@ namespace none
 	const char name[]="none";
 };
 
-/*
-class activation_function
-{
-public:
-	float (*f)(float);
-	float (*df)(float);
-	const char *name;
-	activation_function(std::string &act)
-	{
-	if(act.compare(identity::name)==0) { f = &identity::f; df = &identity::df; name=identity::name;return;}
-	if(act.compare(tan_h::name)==0) { f = &tan_h::f; df = &tan_h::df; name=tan_h::name; return;}
-	if(act.compare(lrelu::name)==0) { f = &lrelu::f; df = &lrelu::df; name=lrelu::name;  return; }
-	if(act.compare(relu::name)==0) { f = &relu::f; df = &relu::df; name=relu::name;return ;}
-	if(act.compare(sigmoid::name)==0) { f = &sigmoid::f; df = &sigmoid::df; name=sigmoid::name; return ;}
-	
-	f = &none::f; df = &none::df; name=none::name; return ;
-	}
-
-	activation_function(const char *type)
-	{
-		activation_function(std::string(type));
-	}
-};
-/*/
-
 typedef struct 
 {
 public:
@@ -174,5 +149,5 @@ activation_function* new_activation_function(const char *type)
 	std::string act(type);
 	return new_activation_function(act);
 }
-//*/
+
 } // namespace

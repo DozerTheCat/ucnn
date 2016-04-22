@@ -49,36 +49,13 @@
 
 #include <time.h>
 #include <string>
-#include "network.h"
+#include "network.h" // this is the important thing
+
+// this other stuff may be moved to utils
 
 
 namespace ucnn
 {
-
-// returns Energy (euclidian distance / 2) and max index
-float match_labels(const float *out, const float *target, const int size, int *best_index=NULL)
-{
-	float E=0;
-	int max_j=0;
-	for(int j=0; j<size; j++)
-	{
-		E+=(out[j]-target[j])*(out[j]-target[j]);
-		if(out[max_j]<out[j]) max_j=j;
-	}
-	if(best_index) *best_index=max_j;
-	E*=0.5;
-	return E;
-}
-
-int max_index(const float *out, const int size)
-{
-	int max_j=0;
-	for(int j=0; j<size; j++)
-	{
-		if(out[max_j]<out[j]) max_j=j;
-	}
-	return max_j;
-}
 
 // class to handle timing and drawing text progress output
 class progress
@@ -107,6 +84,32 @@ public:
 		float percent_complete = 100.f*item_index/total_progress_items;
 		if(percent_complete>0) std::cout << label_progress << (int)percent_complete <<"% (" << (int)time_remaining << "sec remaining)     \r";
 	}
+	void draw_header(std::string name, bool _time=false)
+	{
+		std::string header = "==  " + name + "  ";
+
+		int seconds = 0;
+		std::string elapsed;
+		int L = 79 - (int)header.length();
+		if (_time)
+		{
+			seconds = (int)elapsed_seconds();
+			int minutes = (int)(seconds / 60);
+			int hours = (int)(minutes / 60);
+			seconds = seconds - minutes * 60;
+			minutes = minutes - hours * 60;
+			elapsed = " " + std::to_string((long long)hours) + ":" + std::to_string((long long)minutes) + ":" + std::to_string((long long)seconds);
+			L-= (int)elapsed.length();
+		}
+		for (int i = 0; i<L; i++) header += "=";
+		if (_time)
+			std::cout << header << elapsed << std::endl;
+		else 
+			std::cout << header << std::endl;
+	}
 };
+
+// just to make the output easier to read
+
 
 }// namespace

@@ -181,7 +181,7 @@ public:
 		p_act=p; _stride= stride; _pool_size=pool_size; p_act=new_activation_function("identity"); //layer_type=pool_type;
 	}
 	virtual  ~max_pooling_layer(){}
-	virtual std::string get_config_string() {std::string str="max_pool "+int2str(_pool_size) + int2str(_stride) +"\n"; return str;}
+	virtual std::string get_config_string() {std::string str="max_pool "+int2str(_pool_size) +" "+ int2str(_stride) +"\n"; return str;}
 
 	// ToDo would like delayed activation of conv layer if available
 	virtual void activate_nodes(){ return;}

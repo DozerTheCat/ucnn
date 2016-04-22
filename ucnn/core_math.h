@@ -29,7 +29,6 @@
 #include <math.h>
 
 
-
 namespace ucnn
 {
 
@@ -48,7 +47,6 @@ inline float dot(const float *x1, const float *x2, const int size)
 		return v;
 	};
 }
-
 
 // second item is rotated 180 (this is a convolution)
 inline float dot_rot180(const float *x1, const float *x2, const int size)	
@@ -132,120 +130,9 @@ inline float unwrap_2d_dot_rot180(const float *x1, const float *x2, const int si
 	return v;
 }
 
-/*
-// x2 is kernel, which is reversed
-inline float convolve_3x3(const float *x1, const float *x2, const int size, int stride1, int stride2)	
-{	
-	float v=0;
-	const float *f1=&x1[0]; const float *f2=&x2[0];
-	v = f1[0]*f2[2]+f1[1]*f2[1]+f1[2]*f2[0];
-	f1+=stride1;f2+=stride2;
-	v += f1[0]*f2[2]+f1[1]*f2[1]+f1[2]*f2[0];
-	f1+=stride1;f2+=stride2;
-	v += f1[0]*f2[2]+f1[1]*f2[1]+f1[2]*f2[0];
-	return v;
-}
-inline float convolve_4x4(const float *x1, const float *x2, const int size, int stride1, int stride2)	
-{	
-	float v=0;
-	const float *f1=&x1[0]; const float *f2=&x2[0];
-	v+=f1[0]*f2[3]+f1[1]*f2[2]+f1[2]*f2[1]+f1[3]*f2[0];
-	f1+=stride1;f2+=stride2;
-	v+=f1[0]*f2[3]+f1[1]*f2[2]+f1[2]*f2[1]+f1[3]*f2[0];
-	f1+=stride1; f2+=stride2;
-	v+=f1[0]*f2[3]+f1[1]*f2[2]+f1[2]*f2[1]+f1[3]*f2[0];
-	f1+=stride1; f2+=stride2;
-	v+=f1[0]*f2[3]+f1[1]*f2[2]+f1[2]*f2[1]+f1[3]*f2[0];
-	return v;
-}
-inline float convolve_5x5(const float *x1, const float *x2, const int size, int stride1, int stride2)	
-{	
-	float v=0;
-
-	const float *f1=&x1[0]; const float *f2=&x2[0];
-	v+=f1[0]*f2[4]+f1[1]*f2[3]+f1[2]*f2[2]+f1[3]*f2[1]+f1[4]*f2[0];
-	f1+=stride1;f2+=stride2;
-	v+=f1[0]*f2[4]+f1[1]*f2[3]+f1[2]*f2[2]+f1[3]*f2[1]+f1[4]*f2[0];
-	f1+=stride1; f2+=stride2;
-	v+=f1[0]*f2[4]+f1[1]*f2[3]+f1[2]*f2[2]+f1[3]*f2[1]+f1[4]*f2[0];
-	f1+=stride1; f2+=stride2;
-	v+=f1[0]*f2[4]+f1[1]*f2[3]+f1[2]*f2[2]+f1[3]*f2[1]+f1[4]*f2[0];
-	f1+=stride1; f2+=stride2;
-	v+=f1[0]*f2[4]+f1[1]*f2[3]+f1[2]*f2[2]+f1[3]*f2[1]+f1[4]*f2[0];
-	
-	return v;
-}
-*/
-
-/*
-inline float convolve_rot180_5x5(const float *x1, const float *x2, const int size, int stride1, int stride2)	
-{	
-	float v=0;
-	const float *f1=&x1[stride1*4]; const float *f2=&x2[0];
-	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; 
-	f1-=stride1; f2+=stride2;
-	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; 
-	f1-=stride1; f2+=stride2;
-	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; 
-	f1-=stride1; f2+=stride2;
-	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; 
-	f1-=stride1; f2+=stride2;
-	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; 
-	return v;
-}
-
-inline float convolve_rot180(const float *x1, const float *x2, const int size, int stride1, int stride2)	
-{	
-	float v=0;
-	int s1=0, s2=0;
-	/*
-	switch(size)
-	{
-	case 1: return x1[0]*x2[0]; 
-	case 2: return x1[stride1+0]*x2[0]+x1[stride1+1]*x2[1] + x1[1]*x2[stride2]+x1[1]*x2[stride2+1]; 
-	case 3: s1=stride1*2;
-			v = x1[s1+2]*x2[0]+x1[s1+1]*x2[1]+x1[s1]*x2[2];
-			s1-=stride1;
-			v+= x1[s1+2]*x2[stride2]+x1[s1+1]*x2[stride2+1]+x1[s1]*x2[stride2+2];
-			stride2+=stride2;
-			v+= x1[2]*x2[stride2]+x1[1]*x2[stride2+1]+x1[0]*x2[stride2+2];
-			return v;
-	case 5:	s1=stride1*4;
-			v= x1[s1+4]*x2[0]+x1[s1+3]*x2[1]+x1[s1+2]*x2[2]+x1[s1+1]*x2[3]+x1[s1+0]*x2[4]; 
-			s1-=stride1; s2+=stride2;
-			v+= x1[s1+4]*x2[s2]+x1[s1+3]*x2[s2+1]+x1[s1+2]*x2[s2+2]+x1[s1+1]*x2[s2+3]+x1[s1]*x2[s2+4];
-			s1-=stride1; s2+=stride2;
-			v+= x1[s1+4]*x2[s2]+x1[s1+3]*x2[s2+1]+x1[s1+2]*x2[s2+2]+x1[s1+1]*x2[s2+3]+x1[s1]*x2[s2+4];
-			s1-=stride1; s2+=stride2;
-			v+= x1[s1+4]*x2[s2]+x1[s1+3]*x2[s2+1]+x1[s1+2]*x2[s2+2]+x1[s1+1]*x2[s2+3]+x1[s1]*x2[s2+4];
-			s1-=stride1; s2+=stride2;
-			v+= x1[s1+4]*x2[s2]+x1[s1+3]*x2[s2+1]+x1[s1+2]*x2[s2+2]+x1[s1+1]*x2[s2+3]+x1[s1]*x2[s2+4];
-
-			return v;
-	case 4: s1=stride1*3;
-			v= x1[s1+3]*x2[0]+x1[s1+2]*x2[1]+x1[s1+1]*x2[2]+x1[s1+0]*x2[3]; 
-			s1-=stride1; s2+=stride2;
-			v+= x1[s1+3]*x2[s2]+x1[s1+2]*x2[s2+1]+x1[s1+1]*x2[s2+2]+x1[s1+0]*x2[s2+3];
-			s1-=stride1; s2+=stride2;
-			v+= x1[s1+3]*x2[s2]+x1[s1+2]*x2[s2+1]+x1[s1+1]*x2[s2+2]+x1[s1+0]*x2[s2+3];
-			s1-=stride1; s2+=stride2;
-			v+= x1[s1+3]*x2[s2]+x1[s1+2]*x2[s2+1]+x1[s1+1]*x2[s2+2]+x1[s1+0]*x2[s2+3];
-			return v;
-		default: ; 	
-	};
-	*/
-/*
-	for(int j=0; j<size; j++) 
-	{
-		v+= dot_rot180(&x2[stride2*j],&x1[stride1*(size-j-1)],size);
-//		v+= dot(&x1[stride1*j],&x2[stride2*(size-j-1)],size);
-	}
-	return v;
-}
-*/
-
 // matrix class ---------------------------------------------------
 // should use opencv if available
+//
 class matrix
 {
 	int _size;
@@ -410,13 +297,22 @@ public:
 	  for(int i = 0; i < _size; i++) x[i] += m2.x[i];
 	  return *this;
 	}
+	// -=
+	inline matrix& matrix::operator-=(const matrix &m2) {
+		for (int i = 0; i < _size; i++) x[i] -= m2.x[i];
+		return *this;
+	}
+	// *= float
+	inline matrix matrix::operator *=(const float v) {
+		for (int i = 0; i < _size; i++) x[i] = x[i] * v;
+		return *this;
+	}
 	// * float
 	inline matrix matrix::operator *(const float v){
       matrix T(cols,rows,1);
 	  for(int i = 0; i < _size; i++) T.x[i] = x[i] * v;
 	  return T;
 	}
-	
 
 	// +
 	inline matrix matrix::operator +(matrix m2)
