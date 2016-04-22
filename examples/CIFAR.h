@@ -72,10 +72,11 @@ bool parse_cifar_data(const std::string& cifar_file,
 		int height = 32+2*y_padding;
 		std::vector<float> image(height*width*3);
 
+		// convert from RGB to BGR
 		for (size_t c = 0; c < 3; c++)
 		for (size_t y = 0; y < 32; y++)
 		for (size_t x = 0; x < 32; x++)
-			image[width * (y + y_padding) + x + x_padding + c*width*height] = 
+			image[width * (y + y_padding) + x + x_padding + (3-c-1)*width*height] =
 			(image_c[y * 32 + x+c*32*32] / 255.0f) * (scale_max - scale_min) + scale_min;
 		
 		images->push_back(image);
