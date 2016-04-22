@@ -11,11 +11,11 @@ Features Supported:
 + Layers:  Input, Fully Connected, Convolution, Max Pool, Fractional Max Pool (in progress), Concatenation (in progress)
 + Activation Functions: Identity, Hyperbolic Tangent (tanh), Exponential Linear Unit (ELU), Rectified Linear Unit (ReLU), Leaky Rectified Linear Unit (LReLU), Very Leaky Rectified Linear Unitv (VLReLU), Sigmoid, Softmax (in progress)
 + Optimization: Stochastic Gradient Descent, RMSProp, AdaGrad
-+ Loss Functions: only mean squared error has been tested
++ Loss Functions: Mean Squared Error is wired up currently.  Option for others (in progress).
 + Threading: optional and externally controlled at the application level using OpenMP
-+ Architecture: Non-standard network topologies like resnet or an inception module can be constructed
-+ Smart training: Just an option to skip training when forward prediction is already good. This can dramatically speed up training for some problems. 
-+ Image Support: optional OpenCV utilities
++ Architecture: Branching allowed
++ Smart Solver: Speeds training. 
++ Image Support: optional OpenCV utilities (in progress)
 
 API Examples:
 Load model and perform prediction:
@@ -24,7 +24,7 @@ Load model and perform prediction:
 
 ucnn::network cnn; 
 cnn.read("../models/uCNN_CIFAR-10.txt");
-const float *out=cnn.predict(float_image.data());
+const int predicted_class=cnn.predict_class(float_image.data());
 
 ```
 
@@ -33,32 +33,35 @@ Construction of a new CNN for MNIST, and train records with OpenMP threading:
 #include <ucnn_omp.h>
 
 ucnn::network cnn("adagrad");
-cnn.set_smart_train_level(0.05f);
+cnn.set_smart_train(true);
 cnn.allow_threads(thread_count);  
-cnn.allow_mini_batches(mini_batch_size);
+cnn.set_mini_batch_size(mini_batch_size);
 	
 // add layer definitions	
-cnn.push_back("I1","input 28 28 1");              // MNIST is 28x28x1
-cnn.push_back("C1","convolution 5 5 12 lrelu");   // 5x5 kernel, 12 maps.  output size is 28-5+1=24
-cnn.push_back("P1","fractional_max_pool 12");     // max pool. output size is 12
-cnn.push_back("C2","convolution 5 5 20 lrelu");   // 5x5 kernel, 20 maps.  output size is 10-5+1=6
-cnn.push_back("P2","fractional_max_pool 5");      // fractional pool. output size is 5 
-cnn.push_back("C3","convolution 5 5 150 lrelu");  // 5x5 kernel, 150 maps.  output size is 5-5+1=1
-cnn.push_back("FC1","fully_connected 100 lrelu"); // fully connected 100 nodes, Leaky ReLU 
+cnn.push_back("I1","input 28 28 1");            // MNIST is 28x28x1
+cnn.push_back("C1","convolution 5 5 15 relu");  // 5x5 kernel, 12 maps.  out size is 28-5+1=24
+cnn.push_back("P1","max_pool 4 4");             // pool 4x4 blocks, stride 4. out size is 6
+cnn.push_back("C2","convolution 5 5 150 relu"); // 5x5 kernel, 150 maps.  out size is 6-5+1=2
+cnn.push_back("P2","max_pool 2 2");             // pool 2x2 blocks. out size is 2/2=1 
+cnn.push_back("FC1","fully_connected 100 identity");// fully connected 100 nodes, ReLU 
 cnn.push_back("FC2","fully_connected 10 tanh"); 
-
-// connect layers automatically
+ 
+// connect layers automatically (no branches)
 cnn.connect_all();
 
 // train with OpenMP threading
+cnn.start_epoch();
+
 #pragma omp parallel num_threads(thread_count) 
 #pragma omp for schedule(dynamic)
 for(int k=0; k<train_samples; k++) 
-	cnn.train(train_images[k].data(), target[k].data());
+	cnn.train_class(train_images[k].data(), train_labels[k]);
 
-cnn.sync_mini_batch();
-cnn.write(model_file);
-	
+cnn.end_epoch();
+std::cout << "estimated accuracy:" << cnn.estimated_accuracy << "%" << std::endl;
+
+cnn.write("ucnn_model_mnist.txt");
+
 ```
 
 Example output from sample training application (configuration above):
