@@ -53,7 +53,7 @@ std::string data_path="../data/cifar-10-batches-bin/";
 std::string model_file="../models/uCNN_CIFAR-10.txt";
 //*/
 
-void test(ucnn::network &cnn, std::vector<std::vector<float>> &test_images, std::vector<int> &test_labels)
+void test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images, const std::vector<int> &test_labels)
 {
 	// use progress object for simple timing and status updating
 	ucnn::progress progress((int)test_images.size(), "  testing : ");
@@ -64,11 +64,10 @@ void test(ucnn::network &cnn, std::vector<std::vector<float>> &test_images, std:
 
 	for(int k=0; k<record_cnt; k++)
 	{
-		// uccn returns a pointer to internally managed memmory (pointer to output of final layer- do not delete it)
-		const float *out=cnn.predict(test_images[k].data());
+		// predict_class returnes the output index of the highest response
+		const int prediction=cnn.predict_class(test_images[k].data());
 
-		// this utility funciton finds the max
-		if(ucnn::max_index(out,out_size)==test_labels[k]) correct_predictions++;
+		if(prediction ==test_labels[k]) correct_predictions++;
 
 		if(k%1000==0) progress.draw_progress(k);
 	}

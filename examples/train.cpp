@@ -77,6 +77,29 @@ float test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_image
 	return error;
 }
 
+void remove_cifar_mean(std::vector<std::vector<float>> &train_images, std::vector<std::vector<float>> &test_images)
+{
+	// calculate the mean for every pixel position 
+	ucnn::matrix mean(32, 32, 3);
+	mean.fill(0);
+	for (int i = 0; i < train_images.size(); i++) mean += ucnn::matrix(32, 32, 3, train_images[i].data());
+	mean *= (float)(1.f / train_images.size());
+
+	// remove mean from data
+	for (int i = 0; i < train_images.size(); i++)
+	{
+		ucnn::matrix img(32, 32, 3, train_images[i].data());
+		img -= mean;
+		memcpy(train_images[i].data(), img.x, sizeof(float)*img.size());
+	}
+	for (int i = 0; i < test_images.size(); i++)
+	{
+		ucnn::matrix img(32, 32, 3, test_images[i].data());
+		img -= mean;
+		memcpy(test_images[i].data(), img.x, sizeof(float)*img.size());
+	}
+}
+
 int _tmain()
 {
 	// == parse data
@@ -94,8 +117,9 @@ int _tmain()
 	ucnn::network cnn("adagrad"); 
 	cnn.set_smart_train(true); // speed up training
 
-	const int epochs=100;
-	float learning_rate_decay=0.01f;
+	float learning_rate_decay=0.005f;
+	float min_learning_rate = 0.00001f;
+	
 	// configure network 
 	if(data_name().compare("MNIST")==0)
 	{
@@ -110,23 +134,25 @@ int _tmain()
 	else // CIFAR
 	{
 		cnn.push_back("I1","input 32 32 3");				// CIFAR is 32x32x3
-		cnn.push_back("C1","convolution 3 3 32 lrelu");	// 3x3 kernel, 32 maps.  out size is 32-3+1=30
-		cnn.push_back("P1","max_pool 3");					// pool 3x3 blocks. outsize is 10
-		cnn.push_back("C2","convolution 3 3 64 lrelu");	// 3x3 kernel, 64 maps.  out size is 10-3+1=8
-		cnn.push_back("P2","max_pool 2");					// pool 2x2 blocks. outsize is 8/2=4 
-		cnn.push_back("C3","convolution 3 3 64 lrelu");	// 3x3 kernel, 64 maps.  out size is 4-3+1=2
-		cnn.push_back("FC1","fully_connected 128 tanh");	// fully connected 100 nodes, ReLU 
+		cnn.push_back("C1","convolution 5 5 32 relu");		// 5x5 kernel, 32 maps.  out size is 32-5+1=28
+		cnn.push_back("P1","max_pool 3 2");					// 3x3 pool stride 2. out size is (28-3)/2+1=13
+		cnn.push_back("C2","convolution 3 3 32 relu");		// 3x3 kernel, 32 maps.  out size is 11
+		cnn.push_back("P2","max_pool 3 2");					// 3x3 pool stride 2. outsize is (11-3)/2+1=5
+		cnn.push_back("C3","convolution 3 3 64 relu");		// 3x3 kernel, 64 maps.  out size is 5-3+1=3
+		//cnn.push_back("P3", "max_pool 3");					// 3x3 pool stride 1. outsize is 1
+		cnn.push_back("FC1","fully_connected 64 identity");	// fully connected 100 nodes, ReLU 
 		cnn.push_back("FC2","fully_connected 10 tanh"); 
 	}
 
-	// connect all the layers. Call connect() manually for all layer connections if you need more exotic networks/branches.
+	// connect all the layers. Call connect() manually for all layer connections if you need more exotic networks.
 	cnn.connect_all();
 
 	const int train_samples=(int)train_images.size();
 
+	//training epochs
+	const int epochs = 300;
 	// setup timer/progress for overall training
 	ucnn::progress overall_progress(epochs, "  overall:\t\t");
-	//training epochs
 	for(int epoch=0; epoch<epochs; epoch++)
 	{
 		overall_progress.draw_header(data_name(), true);
@@ -147,7 +173,7 @@ int _tmain()
 		
 		cnn.end_epoch();
 
-		std::cout << "  training time:\t" << progress.elapsed_seconds() << " seconds on 1 thread"<< std::endl;
+		std::cout << "  training time:\t" << progress.elapsed_seconds() << " seconds on "<< 1 << " thread"<< std::endl;
 		std::cout << "  model updates:\t" << cnn.train_updates << " (" << (int)(100.f*(1. - (float)cnn.train_skipped / cnn.train_samples)) << "% of records)" << std::endl;
 		std::cout << "  estimated accuracy:\t" << cnn.estimated_accuracy << "%" << std::endl;
 
@@ -171,10 +197,12 @@ int _tmain()
 		std::cout << "  saved model:\t\t"<<model_file<<std::endl<< std::endl;
 
 		// lower learning rate every so often
-		if ((epoch + 1) % 10 == 0)
+		if ((epoch + 1) % 4 == 0)
 		{
+			float new_learning_rate = (1.f - learning_rate_decay)*cnn.get_learning_rate();
+			if (new_learning_rate < min_learning_rate) new_learning_rate = min_learning_rate;
 			//cnn.normalize_weights();
-			cnn.set_learning_rate((1.f - learning_rate_decay)*cnn.get_learning_rate());
+			cnn.set_learning_rate(new_learning_rate);
 		}
 
 	}

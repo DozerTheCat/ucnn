@@ -157,10 +157,4 @@ bool parse_train_data(std::string &data_path, std::vector<std::vector<float>> &t
 }
 }
 
-namespace tiny_cnn
-{
-
-
-} // end tiny_cnn namespace
-
 

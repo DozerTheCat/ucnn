@@ -39,7 +39,7 @@
 #include <stdio.h>
 #include <tchar.h>
 
-#include "ucnn_omp.h"  
+#include <ucnn_omp.h>
 #include "MNIST.h"
 #include "CIFAR.h"
 
@@ -56,21 +56,6 @@ std::string data_path="../data/cifar-10-batches-bin/";
 std::string model_file="../models/uCNN_CIFAR-10.txt";
 //*/
 
-// just to make the output easier to read
-void draw_header(std::string name, int _seconds)
-{
-	std::string header="==  "+ name + "  "; 
-	int seconds = _seconds;
-	int minutes  =(int)(seconds/60);
-	int hours = (int)(minutes/60);
-	seconds = seconds-minutes*60;
-	minutes = minutes-hours*60;
-	std::string elapsed = " "+std::to_string((long long)hours)+":"+std::to_string((long long)minutes)+":"+std::to_string((long long)seconds);
-	int L = 79-(int)header.length()-(int)elapsed.length();
-	for(int i=0; i<L; i++) header+="=";
-	std::cout << header<< elapsed<<std::endl;	
-}
-
 float test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images, const std::vector<int> &test_labels)
 {
 	// use progress object for simple timing and status updating
@@ -85,19 +70,40 @@ float test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_image
 	for(int k=0; k<record_cnt; k++)
 	{
 		// uccn returns a pointer to internally managed memmory (pointer to output of final layer- do not delete it)
-		const float *out=cnn.predict(test_images[k].data());
+		const int prediction=cnn.predict_class(test_images[k].data());
 
 		// this utility funciton finds the max
-		if(ucnn::max_index(out,out_size)==test_labels[k]) correct_predictions+=1;
+		if(prediction ==test_labels[k]) correct_predictions+=1;
 	
 		if(k%1000==0) progress.draw_progress(k);
 	}
 
 	float dt = progress.elapsed_seconds();
 	float error = 100.f-(float)correct_predictions/record_cnt*100.f;
-	//std::cout << "  testing time: " << dt << " seconds ("<<test_images.size() <<" records at "<<(float)record_cnt/dt << " records/second)      "<< std::endl;
-	//std::cout << "  accuracy: " << (float)correct_predictions/record_cnt*100.f <<"%" << std::endl;
 	return error;
+}
+
+void remove_cifar_mean(std::vector<std::vector<float>> &train_images, std::vector<std::vector<float>> &test_images)
+{
+	// calculate the mean for every pixel position 
+	ucnn::matrix mean(32, 32, 3);
+	mean.fill(0);
+	for (int i = 0; i < train_images.size(); i++) mean += ucnn::matrix(32, 32, 3, train_images[i].data());
+	mean *= (float)(1.f / train_images.size());
+
+	// remove mean from data
+	for (int i = 0; i < train_images.size(); i++)
+	{
+		ucnn::matrix img(32, 32, 3, train_images[i].data());
+		img -= mean;
+		memcpy(train_images[i].data(), img.x, sizeof(float)*img.size());
+	}
+	for (int i = 0; i < test_images.size(); i++)
+	{
+		ucnn::matrix img(32, 32, 3, test_images[i].data());
+		img -= mean;
+		memcpy(test_images[i].data(), img.x, sizeof(float)*img.size());
+	}
 }
 
 int _tmain()
@@ -113,105 +119,102 @@ int _tmain()
 	if(!parse_test_data(data_path, test_images, test_labels)) {std::cerr << "error: could not parse data.\n"; return 1;}
 	if(!parse_train_data(data_path, train_images, train_labels)) {std::cerr << "error: could not parse data.\n"; return 1;}
 
-	// since labels are integers but network output is really an array, need to make appropriate target outputs
-	std::vector<std::vector<float>> target;
-	for(int i=0; i<10; i++)
-	{
-		// target array is -1 except at label index where it is 1
-		std::vector<float> t(10,-1);
-		t[i]=1;
-		target.push_back(t);
-	}
-
 	// == setup the network  - when you train you must specify an optimizer ("sgd", "rmsprop", "adagrad")
 	ucnn::network cnn("adagrad"); 
 	// !! the thread count must be set prior to loading or creating a model !!
 	cnn.allow_threads(thread_count);  
-	cnn.allow_mini_batches(mini_batch_size);
-	cnn.set_smart_train_level(0.05f); // this skips back propagation if prediction is good - set to zero to turn off
+	cnn.set_mini_batch_size(mini_batch_size);
+	cnn.set_smart_train(true); // speed up training
+
+	float learning_rate_decay=0.005f;
+	float min_learning_rate = 0.00001f;
 	
-	const int epochs=100;
-	float learning_rate_decay=0.05f;
 	// configure network 
 	if(data_name().compare("MNIST")==0)
 	{
 		cnn.push_back("I1","input 28 28 1");			// MNIST is 28x28x1
-		cnn.push_back("C1","convolution 5 5 12 relu");	// 5x5 kernel, 12 maps.  out size is 28-5+1=24
+		cnn.push_back("C1","convolution 5 5 15 relu");	// 5x5 kernel, 12 maps.  out size is 28-5+1=24
 		cnn.push_back("P1","max_pool 4 ");				// pool 4x4 blocks. outsize is 6
 		cnn.push_back("C2","convolution 5 5 150 relu");	// 5x5 kernel, 150 maps.  out size is 6-5+1=2
-		cnn.push_back("P2","max_pool 2 2");				// pool 2x2 blocks. outsize is 2/2=1 
-		cnn.push_back("FC1","fully_connected 100 relu");// fully connected 100 nodes, ReLU 
+		cnn.push_back("P2","max_pool 2");				// pool 2x2 blocks. outsize is 2/2=1 
+		cnn.push_back("FC1","fully_connected 100 identity");// fully connected 100 nodes, ReLU 
 		cnn.push_back("FC2","fully_connected 10 tanh"); 
 	}
 	else // CIFAR
 	{
 		cnn.push_back("I1","input 32 32 3");				// CIFAR is 32x32x3
-		cnn.push_back("C1","convolution 3 3 32 lrelu");	// 3x3 kernel, 32 maps.  out size is 32-3+1=30
-		cnn.push_back("P1","max_pool 3");					// pool 3x3 blocks. outsize is 10
-		cnn.push_back("C2","convolution 3 3 64 lrelu");	// 3x3 kernel, 64 maps.  out size is 10-3+1=8
-		cnn.push_back("P2","max_pool 2");					// pool 2x2 blocks. outsize is 8/2=4 
-		cnn.push_back("C3","convolution 3 3 64 lrelu");	// 3x3 kernel, 64 maps.  out size is 4-3+1=2
-		cnn.push_back("FC1","fully_connected 128 tanh");	// fully connected 100 nodes, ReLU 
+		cnn.push_back("C1","convolution 5 5 32 relu");		// 5x5 kernel, 32 maps.  out size is 32-5+1=28
+		cnn.push_back("P1","max_pool 3 2");					// 3x3 pool stride 2. out size is (28-3)/2+1=13
+		cnn.push_back("C2","convolution 3 3 32 relu");		// 3x3 kernel, 32 maps.  out size is 11
+		cnn.push_back("P2","max_pool 3 2");					// 3x3 pool stride 2. outsize is (11-3)/2+1=5
+		cnn.push_back("C3","convolution 3 3 64 relu");		// 3x3 kernel, 64 maps.  out size is 5-3+1=3
+		//cnn.push_back("P3", "max_pool 3");					// 3x3 pool stride 1. outsize is 1
+		cnn.push_back("FC1","fully_connected 64 identity");	// fully connected 100 nodes, ReLU 
 		cnn.push_back("FC2","fully_connected 10 tanh"); 
 	}
 
 	// connect all the layers. Call connect() manually for all layer connections if you need more exotic networks.
 	cnn.connect_all();
 
-
 	const int train_samples=(int)train_images.size();
 
-	ucnn::progress overall_progress(epochs, "  overall:\t\t");
 	//training epochs
+	const int epochs = 300;
+	// setup timer/progress for overall training
+	ucnn::progress overall_progress(epochs, "  overall:\t\t");
 	for(int epoch=0; epoch<epochs; epoch++)
 	{
-		draw_header(data_name(), (int)overall_progress.elapsed_seconds());
+		overall_progress.draw_header(data_name(), true);
 		std::cout << "  epoch:\t\t"<< epoch+1<< " of " << epochs <<std::endl;
-
+		// setup timer / progress for this one epoch
 		ucnn::progress progress(train_samples, "  training:\t\t");
 
-		// lower learning rate every so often
-		if((epoch+1)%10==0) 
-			cnn.set_learning_rate((1.f-learning_rate_decay)*cnn.get_learning_rate() ) ;
+		cnn.start_epoch();
 	
-		int skipped=0;
 		#pragma omp parallel num_threads(thread_count) 
-		#pragma omp for reduction(+:skipped) schedule(dynamic)
+		#pragma omp for schedule(dynamic)
 		for(int k=0; k<train_samples; k++) 
 		{
-			const bool trained=cnn.train(train_images[k].data(), target[train_labels[k]].data());
-			if(!trained) skipped++; 
+			// for CIFAR, can augment data random with mirror flips
+			//ucnn::matrix m(32, 32, 3, train_images[k].data()); if(rand()%2==0) m = m.flip_cols(); 
+			//cnn.train_class(m.x, train_labels[k]);
+			cnn.train_class(train_images[k].data(), train_labels[k]);
 			if(k%1000==0) progress.draw_progress(k);
 		}	
-		cnn.sync_mini_batch();
 
-		std::cout << "  training time:\t" << progress.elapsed_seconds() << " seconds                            "<< std::endl;
+		cnn.end_epoch();
 		
-		if(cnn.get_smart_train_level()>0)
-		{
-			std::cout << "  skipped:\t\t" << skipped << " samples of "<<train_samples << " (" << (int)(100.f*skipped/train_samples)<<"%)"<< std::endl;
-			// if skipped too many records, lower the skip energy threshold
-			if(100*skipped/train_samples > 90) 
-			{
-				//std::cout << "  reducing smart train, was "<< (float)cnn.get_smart_train_level() << std::endl; 
-				cnn.set_smart_train_level(0.5f*cnn.get_smart_train_level());
-			}
-		}
+		std::cout << "  training time:\t" << progress.elapsed_seconds() << " seconds on "<< thread_count << " threads"<< std::endl;
+		std::cout << "  model updates:\t" << cnn.train_updates << " (" << (int)(100.f*(1. - (float)cnn.train_skipped / cnn.train_samples)) << "% of records)" << std::endl;
+		std::cout << "  estimated accuracy:\t" << cnn.estimated_accuracy << "%" << std::endl;
 
 		float error_rate=0;
+
+		/* if you want to run in-sample testing on the training set, include this code
 		// == run training set
 		progress.reset((int)train_images.size(), "  testing in-sample:\t");
 		error_rate=test(cnn, train_images, train_labels);
 		std::cout << "  train accuracy:\t"<<100.f-error_rate<<"% ("<< error_rate<<"% error)      "<<std::endl;
+		*/
 
 		// == run testing set
 		progress.reset((int)test_images.size(), "  testing out-of-sample:\t");
 		error_rate=test(cnn, test_images, test_labels);
 		std::cout << "  test accuracy:\t"<<100.f-error_rate<<"% ("<< error_rate<<"% error)      "<<std::endl;
 
-		std::string model_file="../models/tmp_"+std::to_string((long long)epoch) +".bin";
-		cnn.write(model_file,true);
+		// save model
+		std::string model_file="../models/tmp_"+std::to_string((long long)epoch) +".txt";
+		cnn.write(model_file);
 		std::cout << "  saved model:\t\t"<<model_file<<std::endl<< std::endl;
+
+		// lower learning rate every so often
+		if ((epoch + 1) % 4 == 0)
+		{
+			float new_learning_rate = (1.f - learning_rate_decay)*cnn.get_learning_rate();
+			if (new_learning_rate < min_learning_rate) new_learning_rate = min_learning_rate;
+			//cnn.normalize_weights();
+			cnn.set_learning_rate(new_learning_rate);
+		}
 
 	}
 	std::cout << std::endl;
