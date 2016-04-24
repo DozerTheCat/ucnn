@@ -1,20 +1,20 @@
 # μCNN
-(micro convolutional neural network)
+# (micro Convolutional Neural Network)
 
-A fairly bare bones CNN implementation that was built with the goal to balance hack-ability, functionality, and speed.  It was a learning exercise inspired by tiny-cnn, which is a wonderful alternative to this code.  μCNN is only C++ with only old fashioned C tricks for optimization.  Therefore is not meant to train deep models. For that, go with Caffe, TensorFlow, CMTK, Torch, etc…  However it is still able to train usable models for many general object detection and object recognition problems.
+A fairly bare bones C++ CNN implementation that was built with the goal to balance hack-ability, functionality, and speed.  It was a learning exercise inspired partially by tiny-cnn, which is a wonderful alternative to this code, and partially by my frustration trying to find a CNN package that easily builds in Visual Studio.  μCNN is in readable C++ with only old fashioned C tricks for optimization.  It is not designed to use GPUs or to scale over a cluster to train very deep models. For that, go with Caffe, TensorFlow, CMTK, Torch, etc…  μCNN is competitive with other CPU training options and can train usable models for most general object detection and object recognition problems.
 
-μCNN includes the standard MNIST and CIFAR-10 examples. Laptop CPU training  gives 99% accuracy on MNIST in about 52secs of training using both cores. The Windows executable size is around 100KB.
+Thought it is easy to dive into the code and modify layers or loss functions, at the same time the API provides a smart training option which smartly manages training.  μCNN includes the standard MNIST and CIFAR-10 examples and with a laptop CPU, smart training gives 99% accuracy on MNIST in about a minute. 
 
-It was tested with MS Developer Studio 2010 and 2015. It should be fairly portable with little work. 
+It was tested with MS Developer Studio 2010, 2015, and Cygwin g++ 5.3.0. It should be fairly portable with little work. 
 
 Features Supported:
-+ Layers:  Input, Fully Connected, Convolution, Max Pool, Fractional Max Pool (in progress), Concatenation (in progress)
++ Layers:  Input, Fully Connected, Convolution, Max Pool, Fractional Max Pool (in progress), Stocastic Pooling (in progress), Concatenation (in progress)
 + Activation Functions: Identity, Hyperbolic Tangent (tanh), Exponential Linear Unit (ELU), Rectified Linear Unit (ReLU), Leaky Rectified Linear Unit (LReLU), Very Leaky Rectified Linear Unitv (VLReLU), Sigmoid, Softmax (in progress)
 + Optimization: Stochastic Gradient Descent, RMSProp, AdaGrad
-+ Loss Functions: Mean Squared Error is wired up currently.  Option for others (in progress).
++ Loss Functions: Mean Squared Error, Cross Entropy
 + Threading: optional and externally controlled at the application level using OpenMP
 + Architecture: Branching allowed
-+ Smart Solver: Speeds training. 
++ Smart Solver: Optimizes parameters and speeds training
 + Image Support: optional OpenCV utilities (in progress)
 
 API Examples:
@@ -34,8 +34,8 @@ Construction of a new CNN for MNIST, and train records with OpenMP threading:
 
 ucnn::network cnn("adagrad");
 cnn.set_smart_train(true);
-cnn.allow_threads(thread_count);  
-cnn.set_mini_batch_size(mini_batch_size);
+cnn.allow_threads(8);  
+cnn.set_mini_batch_size(25);
 	
 // add layer definitions	
 cnn.push_back("I1","input 28 28 1");            // MNIST is 28x28x1
@@ -46,18 +46,18 @@ cnn.push_back("P2","max_pool 2 2");             // pool 2x2 blocks. out size is 
 cnn.push_back("FC1","fully_connected 100 identity");// fully connected 100 nodes, ReLU 
 cnn.push_back("FC2","fully_connected 10 tanh"); 
  
-// connect layers automatically (no branches)
-cnn.connect_all();
+cnn.connect_all(); // connect layers automatically (no branches)
 
 // train with OpenMP threading
 cnn.start_epoch();
 
-#pragma omp parallel num_threads(thread_count) 
+#pragma omp parallel num_threads(8) 
 #pragma omp for schedule(dynamic)
 for(int k=0; k<train_samples; k++) 
 	cnn.train_class(train_images[k].data(), train_labels[k]);
 
 cnn.end_epoch();
+
 std::cout << "estimated accuracy:" << cnn.estimated_accuracy << "%" << std::endl;
 
 cnn.write("ucnn_model_mnist.txt");
