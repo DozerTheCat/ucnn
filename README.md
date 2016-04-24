@@ -48,23 +48,25 @@ cnn.push_back("FC2","fully_connected 10 tanh");
  
 cnn.connect_all(); // connect layers automatically (no branches)
 
-// train with OpenMP threading
-cnn.start_epoch();
-
-#pragma omp parallel num_threads(8) 
-#pragma omp for schedule(dynamic)
-for(int k=0; k<train_samples; k++) 
-	cnn.train_class(train_images[k].data(), train_labels[k]);
-
-cnn.end_epoch();
-
-std::cout << "estimated accuracy:" << cnn.estimated_accuracy << "%" << std::endl;
-
-cnn.write("ucnn_model_mnist.txt");
+while(1)
+{
+	// train with OpenMP threading
+	cnn.start_epoch();
+	
+	#pragma omp parallel num_threads(8) 
+	#pragma omp for schedule(dynamic)
+	for(int k=0; k<train_samples; k++) 
+		cnn.train_class(train_images[k].data(), train_labels[k]);
+	
+	cnn.end_epoch();
+	
+	std::cout << "estimated accuracy:" << cnn.estimated_accuracy << "%" << std::endl;
+	cnn.write("ucnn_model_mnist.txt");
+};
 
 ```
 
-Example output from sample training application (configuration above):
+Example output from sample application:
 
 ```
 ==  MNIST  ============================================================== 0:0:0
