@@ -1,5 +1,4 @@
-# μCNN
-# (micro Convolutional Neural Network)
+# μCNN (micro Convolutional Neural Network)
 
 A fairly bare bones C++ CNN implementation that was built with the goal to balance hack-ability, functionality, and speed.  It was a learning exercise inspired partially by tiny-cnn, which is a wonderful alternative to this code, and partially by my frustration trying to find a CNN package that easily builds in Visual Studio.  μCNN is in readable C++ with only old fashioned C tricks for optimization.  It is not designed to use GPUs or to scale over a cluster to train very deep models. For that, go with Caffe, TensorFlow, CMTK, Torch, etc…  μCNN is competitive with other CPU training options and can train usable models for most general object detection and object recognition problems.
 
