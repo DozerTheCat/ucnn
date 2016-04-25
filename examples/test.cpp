@@ -80,7 +80,7 @@ void test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images
 }
 
 
-int _tmain()
+int main()
 {
 	// == parse data
 	// array to hold image data (note that ucnn does not require use of std::vector)

@@ -46,7 +46,7 @@
 #include "CIFAR.h"
 
 // <><><><><><><><><><><><> define desired thread count (though you can do things dynamically if needed)
-const int thread_count = 4; 
+const int thread_count = 8; 
 
 // by selecting a different namespace, we'll call different data parsing functions below
 /*
@@ -89,7 +89,7 @@ void test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images
 }
 
 
-int _tmain()
+int main()
 {
 	// == parse data
 	// array to hold image data (note that ucnn does not require use of std::vector)

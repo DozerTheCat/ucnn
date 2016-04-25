@@ -100,7 +100,7 @@ void remove_cifar_mean(std::vector<std::vector<float>> &train_images, std::vecto
 	}
 }
 
-int _tmain()
+int main()
 {
 	// == parse data
 	// array to hold image data (note that ucnn does not require use of std::vector)
@@ -115,18 +115,15 @@ int _tmain()
 
 	// == setup the network  - when you train you must specify an optimizer ("sgd", "rmsprop", "adagrad")
 	ucnn::network cnn("adagrad"); 
-	cnn.set_smart_train(true); // speed up training
-
-	float learning_rate_decay=0.005f;
-	float min_learning_rate = 0.00001f;
+	cnn.set_smart_training(true); // speed up training
 	
 	// configure network 
 	if(data_name().compare("MNIST")==0)
 	{
 		cnn.push_back("I1","input 28 28 1");			// MNIST is 28x28x1
-		cnn.push_back("C1","convolution 5 5 15 relu");	// 5x5 kernel, 12 maps.  out size is 28-5+1=24
+		cnn.push_back("C1","convolution 5 5 15 elu");	// 5x5 kernel, 12 maps.  out size is 28-5+1=24
 		cnn.push_back("P1","max_pool 4");				// pool 4x4 blocks. outsize is 6
-		cnn.push_back("C2","convolution 5 5 150 relu");	// 5x5 kernel, 150 maps.  out size is 6-5+1=2
+		cnn.push_back("C2","convolution 5 5 150 elu");	// 5x5 kernel, 150 maps.  out size is 6-5+1=2
 		cnn.push_back("P2","max_pool 2");				// pool 2x2 blocks. outsize is 2/2=1 
 		cnn.push_back("FC1","fully_connected 100 identity");// fully connected 100 nodes, ReLU 
 		cnn.push_back("FC2","fully_connected 10 tanh"); 
@@ -150,34 +147,34 @@ int _tmain()
 	const int train_samples=(int)train_images.size();
 
 	//training epochs
-	const int epochs = 300;
 	// setup timer/progress for overall training
-	ucnn::progress overall_progress(epochs, "  overall:\t\t");
-	for(int epoch=0; epoch<epochs; epoch++)
+	ucnn::progress overall_progress(-1, "  overall:\t\t");
+	while (1)
 	{
-		overall_progress.draw_header(data_name(), true);
-		std::cout << "  epoch:\t\t"<< epoch+1<< " of " << epochs <<std::endl;
+		overall_progress.draw_header(data_name() + "  Epoch  " + std::to_string((long long)cnn.get_epoch() + 1), true);
 		// setup timer / progress for this one epoch
 		ucnn::progress progress(train_samples, "  training:\t\t");
 
-		cnn.start_epoch();
-		
-		for(int k=0; k<train_samples; k++) 
+		cnn.start_epoch("cross_entropy");
+		cnn.normalize_weights();
+
+		for (int k = 0; k<train_samples; k++)
 		{
 			// for CIFAR, can augment data random with mirror flips
 			//ucnn::matrix m(32, 32, 3, train_images[k].data()); if(rand()%2==0) m = m.flip_cols(); 
 			//cnn.train_class(m.x, train_labels[k]);
 			cnn.train_class(train_images[k].data(), train_labels[k]);
-			if(k%1000==0) progress.draw_progress(k);
-		}	
-		
-		cnn.end_epoch();
+			if (k % 1000 == 0) progress.draw_progress(k);
+		}
 
-		std::cout << "  training time:\t" << progress.elapsed_seconds() << " seconds on "<< 1 << " thread"<< std::endl;
+		cnn.end_epoch();
+		std::cout << "  mini batch:\t\t" << 1 << "                                  " << std::endl;
+		std::cout << "  training time:\t" << progress.elapsed_seconds() << " seconds on " << 1 << " thread" << std::endl;
 		std::cout << "  model updates:\t" << cnn.train_updates << " (" << (int)(100.f*(1. - (float)cnn.train_skipped / cnn.train_samples)) << "% of records)" << std::endl;
 		std::cout << "  estimated accuracy:\t" << cnn.estimated_accuracy << "%" << std::endl;
 
-		float error_rate=0;
+
+		float error_rate = 0;
 
 		/* if you want to run in-sample testing on the training set, include this code
 		// == run training set
@@ -188,24 +185,22 @@ int _tmain()
 
 		// == run testing set
 		progress.reset((int)test_images.size(), "  testing out-of-sample:\t");
-		error_rate=test(cnn, test_images, test_labels);
-		std::cout << "  test accuracy:\t"<<100.f-error_rate<<"% ("<< error_rate<<"% error)      "<<std::endl;
+		error_rate = test(cnn, test_images, test_labels);
+		std::cout << "  test accuracy:\t" << 100.f - error_rate << "% (" << error_rate << "% error)      " << std::endl;
 
 		// save model
-		std::string model_file="../models/tmp_"+std::to_string((long long)epoch) +".txt";
+		std::string model_file = "../models/tmp_" + std::to_string((long long)cnn.get_epoch()) + ".txt";
 		cnn.write(model_file);
-		std::cout << "  saved model:\t\t"<<model_file<<std::endl<< std::endl;
+		std::cout << "  saved model:\t\t" << model_file << std::endl << std::endl;
 
-		// lower learning rate every so often
-		if ((epoch + 1) % 4 == 0)
+		// can't seem to improve
+		if (cnn.elvis_left_the_building())
 		{
-			float new_learning_rate = (1.f - learning_rate_decay)*cnn.get_learning_rate();
-			if (new_learning_rate < min_learning_rate) new_learning_rate = min_learning_rate;
-			//cnn.normalize_weights();
-			cnn.set_learning_rate(new_learning_rate);
+			std::cout << "Elvis just left the building. No further improvement in training found.  Stopping.." << std::endl;
+			break;
 		}
 
-	}
+	};
 	std::cout << std::endl;
 	return 0;
 }
