@@ -29,8 +29,9 @@
 #include <algorithm>
 #include <string>
 #include <vector>
-#include "ucnn.h"
+#include <cstdlib>
 
+#include "core_math.h"
 
 // hack for VS2010 to handle c++11 for(:)
 #if (_MSC_VER  == 1600)
@@ -64,7 +65,8 @@ public:
 	virtual void push_back(int w, int h, int c){}	
 };
 
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE
+
 
 class sgd: public optimizer
 {

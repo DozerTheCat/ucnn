@@ -23,13 +23,11 @@
 //
 // ==================================================================== uCNN ==
 
-
 #pragma once
 
 #include <string>
+#include <sstream>
 
-
-#include "ucnn.h"
 #include "core_math.h"
 #include "activation.h"
 
@@ -55,7 +53,7 @@ public:
 	std::string name;
 	// index of W matrix, index of connected layer
 	std::vector<std::pair<int,base_layer*>> forward_linked_layers;
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE
 	matrix delta;
 	std::vector<std::pair<int,base_layer*>> backward_linked_layers;
 
@@ -65,7 +63,7 @@ public:
 	virtual void accumulate_signal(const base_layer &top_node, const matrix &w, const int threads=1) =0;
 
 	base_layer(const char* layer_name, int _w, int _h=1, int _c=1) : node(_w, _h, _c), bias(_w, _h, _c), p_act(NULL), name(layer_name), pad_cols(0), pad_rows(0)
-		#ifdef INCLUDE_TRAINING_CODE
+		#ifndef NO_TRAINING_CODE
 		,delta(_w,_h,_c)
 		#endif
 	{bias.fill(0.);}
@@ -76,7 +74,7 @@ public:
 		node =matrix(_w,_h,_c);
 		bias =matrix(_w,_h,_c);
 		bias.fill(0.);
-		#ifdef INCLUDE_TRAINING_CODE
+		#ifndef NO_TRAINING_CODE
 		delta =matrix(_w,_h,_c);
 		#endif
 	}
@@ -88,7 +86,7 @@ public:
 	virtual matrix * new_connection(base_layer &top, int weight_mat_index)
 	{
 		top.forward_linked_layers.push_back(std::make_pair((int)weight_mat_index,this));
-		#ifdef INCLUDE_TRAINING_CODE
+		#ifndef NO_TRAINING_CODE
 		backward_linked_layers.push_back(std::make_pair((int)weight_mat_index,&top));
 		#endif
 		int rows=node.cols*node.rows*node.chans; 
@@ -134,7 +132,7 @@ public:
 		//for(int j=0; j<node.size(); j++)	node.x[j]+=dot(top.node.x ,&node.x[j*node.cols],top.node.size());
 
 	}
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE
 	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1) 
 	{
 		const int w_cols = w.cols;
@@ -210,7 +208,7 @@ public:
 					
 //			resize((top.node.cols-2*pad_cols)/pool_size, (top.node.rows-2*pad_rows)/pool_size, top.node.chans);
 		resize(w,h, top.node.chans);
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE
 		backward_linked_layers.push_back(std::make_pair(weight_mat_index,&top));
 #endif
 		return new matrix(1,1,1);
@@ -309,7 +307,7 @@ public:
 			}
 		}
 	}
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE
 
 	// this is upsampling
 	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1)
@@ -361,7 +359,7 @@ public:
 			stride = (int)_pool_size; // trunc - so will be less than needed
 			resize(_out_size,_out_size, top.node.chans);
 
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE
 			backward_linked_layers.push_back(std::make_pair(weight_mat_index,&top));
 #endif
 			return new matrix(1,1,1);
@@ -487,7 +485,7 @@ public:
 			}
 		}
 	}
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE
 
 	// this is upsampling
 	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1)
@@ -528,7 +526,7 @@ public:
 		node =matrix(_w,_h,_c); 
 		bias =matrix(1,1,_c);
 		bias.fill(0.);
-		#ifdef INCLUDE_TRAINING_CODE
+		#ifndef NO_TRAINING_CODE
 		delta =matrix(_w,_h,_c);
 		#endif
 	}
@@ -537,7 +535,7 @@ public:
 	virtual matrix * new_connection(base_layer &top, int weight_mat_index)
 	{
 		top.forward_linked_layers.push_back(std::make_pair(weight_mat_index,this));
-		#ifdef INCLUDE_TRAINING_CODE
+		#ifndef NO_TRAINING_CODE
 		backward_linked_layers.push_back(std::make_pair(weight_mat_index,&top));
 		#endif
 		// re-shuffle these things so weights of size kernel w,h,kerns - node of size see below
@@ -688,7 +686,7 @@ public:
 	}
 
 
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE
 
 	// convolution::distribute_delta
 	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1) 

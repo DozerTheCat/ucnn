@@ -24,11 +24,6 @@
 // ==================================================================== uCNN ==
 #pragma once
 
-// undef if no plans to use training
-#define INCLUDE_TRAINING_CODE
-
-
-
 //#define USE_OMP
 //#define USE_AF
 //#define USE_CUDA
@@ -49,8 +44,9 @@
 
 #include <time.h>
 #include <string>
+#include <chrono>
+#include "core_math.h"
 #include "network.h" // this is the important thing
-
 // this other stuff may be moved to utils
 
 
@@ -61,16 +57,22 @@ namespace ucnn
 class progress
 {
 public:
-	progress(int size=-1, char *label=NULL ) {reset(size, label);}
+	progress(int size=-1, const char *label=NULL ) {reset(size, label);}
 
-	unsigned int start_progress_time;
+	std::chrono::time_point<std::chrono::system_clock>  start_progress_time;
 	unsigned int total_progress_items;
 	std::string label_progress;
 	// if default values used, the values won't be changed from last call
-	void reset(int size=-1, char *label=NULL ) 
-	{start_progress_time=clock(); if(size>0) total_progress_items=size; if(label!=NULL) label_progress=label;}
-
-	float elapsed_seconds() {return (float)(clock()-start_progress_time)/CLOCKS_PER_SEC;}
+	void reset(int size=-1, const char *label=NULL ) 
+	{
+		start_progress_time= std::chrono::system_clock::now();
+		if(size>0) total_progress_items=size; if(label!=NULL) label_progress=label;
+	}
+	float elapsed_seconds() 
+	{	
+		std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::system_clock::now() - start_progress_time);
+		return (float)time_span.count();
+	}
 	float remaining_seconds(int item_index)
 	{
 		float elapsed_dt = elapsed_seconds();
@@ -78,11 +80,16 @@ public:
 		if(percent_complete>0) return ((elapsed_dt/percent_complete*100.f)-elapsed_dt);
 		return 0.f;
 	}
+	// this doesn't work correctly with g++/Cygwin
+	// the carriage return seems to delete the text... 
 	void draw_progress(int item_index)
 	{
 		int time_remaining = (int)remaining_seconds(item_index);
 		float percent_complete = 100.f*item_index/total_progress_items;
-		if(percent_complete>0) std::cout << label_progress << (int)percent_complete <<"% (" << (int)time_remaining << "sec remaining)     \r";
+		if (percent_complete > 0)
+		{
+			std::cout << label_progress << (int)percent_complete << "% (" << (int)time_remaining << "sec remaining)              \r"<<std::flush;
+		}
 	}
 	void draw_header(std::string name, bool _time=false)
 	{
