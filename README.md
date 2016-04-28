@@ -1,19 +1,19 @@
 # μCNN (micro Convolutional Neural Network)
 
-An efficient C++ CNN implementation that was built with the goal to balance hack-ability, functionality, and speed.  It was a learning exercise inspired partially by tiny-cnn, which is a wonderful alternative to this code, and partially by my frustration trying to find a CNN package that easily builds in Visual Studio.  μCNN is in readable C++ with only old fashioned C tricks for optimization. Just a handful (7 or 8) header files required.  It is not designed to use GPUs or to scale over a cluster to train very deep models. For that, go with Caffe, TensorFlow, CMTK, Torch, etc…  μCNN is competitive with other CPU training options and can train usable models for most general object detection and object recognition problems.
+An efficient C++ CNN implementation that was built with the goal to balance hack-ability, functionality, and speed.  It was a learning exercise inspired partially by tiny-cnn, which is a wonderful alternative to this code, and partially by my frustration trying to find a minimal CNN package that easily builds in Visual Studio.  μCNN is in readable C++ with old fashioned C tricks for optimized and portable code (optionally OpenMP and SSE3 speedups can be used). There are just a handful (7 or 8) header files required.  Being a minimal CPU solution, it is not designed to scale over a cluster to train very deep models. For that, go with GPUs and Caffe, TensorFlow, CMTK, Torch, etc…  μCNN is competitive with other CPU training options and can train usable models for most general object detection and object recognition problems.
 
-Though it is easy to dive into the code and modify layers or loss functions, at the same time the API provides a smart training option which abstracts managing the training. μCNN's 'smart training' can give 99% accuracy on MNIST in about a 30 seconds. 
+The API provides a 'smart training' option which abstracts the management of the training process but still provides the flexibility to handle the input data and threading. μCNN's 'smart training' can give 99% accuracy on MNIST in about a 20 seconds. 
 
 μCNN was tested with MS Developer Studio 2010, 2015, and Cygwin g++ 5.3.0. It should be fairly portable with little work. 
 
 Features:
-+ Layers:  Input, Fully Connected, Convolution, Max Pool, Fractional Max Pool (in progress), Stocastic Pooling (in progress), Concatenation (in progress)
++ Layers:  Input, Fully Connected, Convolution, Max Pool, Dropout, (Fractional Max Pool, Stocastic Pooling, Concatenation all in progress)
 + Activation Functions: Identity, Hyperbolic Tangent (tanh), Exponential Linear Unit (ELU), Rectified Linear Unit (ReLU), Leaky Rectified Linear Unit (LReLU), Very Leaky Rectified Linear Unitv (VLReLU), Sigmoid, Softmax (in progress)
 + Optimization: Stochastic Gradient Descent, RMSProp, AdaGrad, Adam
 + Loss Functions: Mean Squared Error, Cross Entropy
 + Threading: optional and externally controlled at the application level using OpenMP
 + Architecture: Branching allowed
-+ Solver: Smart trainint optimizes parameters and speeds up training.
++ Solver: Smart training optimizes parameters, speeds up training, and provides exit criteria.
 + Image Support: optional OpenCV utilities (in progress)
 
 API Examples:
