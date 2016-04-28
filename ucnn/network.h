@@ -28,15 +28,23 @@
 #include <random>
 #include <string>
 #include <iostream> // cout
-#include <fstream>
 #include <sstream>
 #include <map>
 #include <vector>
 
-#include "layer.h"
-#include "optimizer.h"
+#include "ucnn.h"
 #include "activation.h"
-#include "cost.h"
+#include "layer.h"
+#include "loss.h"
+#include "optimizer.h"
+
+#ifdef _WIN32
+    #include <windows.h>
+    void sleep(unsigned milliseconds){ Sleep(milliseconds);}
+#else
+    #include <unistd.h>
+    void sleep(unsigned milliseconds) {usleep(milliseconds * 1000);}
+#endif
 
 // hack for VS2010 to handle c++11 for(:)
 #if (_MSC_VER  == 1600)
@@ -54,13 +62,6 @@
 
 namespace ucnn {
 
-#ifdef _WIN32
-#include <windows.h>
-	void ucnn_sleep(unsigned milliseconds) { Sleep(milliseconds); }
-#else
-#include <unistd.h>
-	void ucnn_sleep(unsigned milliseconds) { usleep(milliseconds * 1000); }
-#endif
 
 // returns Energy (euclidian distance / 2) and max index
 float match_labels(const float *out, const float *target, const int size, int *best_index = NULL)
@@ -90,7 +91,7 @@ int max_index(const float *out, const int size)
 //----------------------------------------------------------------------
 // net - class that holds all the layers and connection information
 //	- runs forward prediction
-//  - with NO_TRAINING_CODE define can only run forward propogation
+//  - with INCLUDE_TRAINING_CODE define can run backpropogation
 
 class network
 {
@@ -103,7 +104,6 @@ class network
 	std::vector <float> _running_E;
 	double _running_sum_E;
 
-	cost_function *_cost_function;
 	optimizer *_optimizer;
 	const int MAIN_LAYER_SET=0;
 	const unsigned char BATCH_RESERVED=1, BATCH_FREE=0, BATCH_COMPLETE=2;
@@ -127,13 +127,9 @@ public:
 
 	int train_correct;
 	int train_skipped;
-	int stuck_counter;
 	int train_updates;
 	int train_samples;
 	int epoch_count;
-	int max_epochs;
-	float best_estimated_accuracy;
-	int best_accuracy_count;
 	float old_estimated_accuracy;
 	float estimated_accuracy;
 
@@ -153,7 +149,6 @@ public:
 	{ 
 		_size=0;  
 		_optimizer = new_optimizer(opt_name);
-		_cost_function = NULL;
 		//std::vector<base_layer *> layer_set;
 		//layer_sets.push_back(layer_set);
 		layer_sets.resize(1);
@@ -165,13 +160,9 @@ public:
 		train_samples = 0;
 		train_skipped = 0;
 		epoch_count = 0; 
-		max_epochs = 1000;
 		train_updates = 0;
 		estimated_accuracy = 0;
 		old_estimated_accuracy = 0;
-		stuck_counter = 0;
-		best_estimated_accuracy=0;
-		best_accuracy_count=0;
 		init_lock();
 
 #ifdef USE_AF
@@ -182,8 +173,7 @@ public:
 	
 	~network() 
 	{
-		clear();
-		if (_cost_function) delete _cost_function;
+		clear(); 
 		if(_optimizer) delete _optimizer; 
 		destroy_lock();	
 	}
@@ -366,10 +356,9 @@ public:
 	// used to push a layer back in the ORDERED list of layers
 	// if connect_all() is used, then the order of the push_back is used to connect the layers
 	// when forward or backward propogation, this order is used for serialized order of calculations 
-	// layer_name must be unique
 	bool push_back(const char *layer_name, const char *layer_config)
 	{
-		if(layer_map[layer_name]) return false; //already exists
+		if(layer_map[layer_name]!=NULL) return false;
 		base_layer *l=new_layer(layer_name, layer_config);
 		// set map to index
 
@@ -391,7 +380,6 @@ public:
 	}
 
 	// connect 2 layers together and initialize weights
-	// top and bottom concepts are reversed 
 	void connect(const char *layer_name_top, const char *layer_name_bottom) 
 	{
 		size_t i_top=layer_map[layer_name_top];
@@ -510,8 +498,8 @@ public:
 	// write parameters to fie
 	// note that this does not persist intermediate training information that could be needed to 'pickup where you left off'
 	// but you can still load and resume training
-	bool write(std::string &filename, bool binary=false){ return write(std::ofstream(filename.c_str()), binary); }
-	bool write(std::ofstream ofs, bool binary=false) 
+	bool write(std::string filename, bool binary=false) { return write(std::ofstream(filename), binary); }
+	bool write(std::ofstream &ofs, bool binary=false) 
 	{
 		// save layers
 		ofs<<(int)layer_sets[MAIN_LAYER_SET].size()<<std::endl;
@@ -556,7 +544,7 @@ public:
 	}
 
 	// read network from a file
-
+	bool read(std::string filename) {	std::ifstream fs(filename); if(fs.is_open()) return read(std::ifstream(filename)); else return false;}
 	bool read(std::istream &ifs)
 	{
 		if(!ifs.good()) return false;
@@ -622,20 +610,8 @@ public:
 
 		return true;
 	}
-	bool read(std::string filename)
-	{
-		std::ifstream fs(filename.c_str(), std::ios::in | std::ios::binary);
-		if (fs.is_open())
-		{
-			bool ret = read(fs);
-			fs.close();
-			return ret;
-		}
 
-		else
-			return false;
-	}
-#ifndef NO_TRAINING_CODE
+#ifdef INCLUDE_TRAINING_CODE
 
 	int reserve_next_batch()
 	{
@@ -662,7 +638,7 @@ public:
 			}
 			// need to wait for ones in progress to finish
 			unlock_batch();
-			ucnn_sleep(1);
+			sleep(1);
 			lock_batch();
 		}
 		return -3;
@@ -670,14 +646,12 @@ public:
 
 	float get_learning_rate() {if(!_optimizer) throw; return _optimizer->learning_rate;}
 	void set_learning_rate(float alpha) {if(!_optimizer) throw; _optimizer->learning_rate=alpha;}
-	void reset_optimizer() {if(!_optimizer) throw; _optimizer->reset();}
-	bool get_smart_training() {return _smart_train;}
-	void set_smart_training(bool _use_train) { _smart_train = _use_train;}
+	void reset() {if(!_optimizer) throw; _optimizer->reset();}
+	bool get_smart_train() {return _smart_train;}
+	void set_smart_train(bool _use_train) { _smart_train = _use_train;}
 	float get_smart_train_level() { return _skip_energy_level; }
 	void set_smart_train_level(float _level) { _skip_energy_level = _level; }
-	void set_max_epochs(int max_e) { if (max_e <= 0) max_e = 1; max_epochs = max_e; }
-	int get_epoch() { return epoch_count; }
-
+	
 	// goal here is to update the weights W. 
 	// use w_new = w_old - alpha dE/dw
 	// E = sum: 1/2*||y-target||^2
@@ -690,7 +664,6 @@ public:
 
 	void start_epoch(std::string loss_function="mse")
 	{
-		_cost_function=new_cost_function(loss_function);
 		train_correct = 0;
 		train_skipped = 0;
 		train_updates = 0;
@@ -699,49 +672,23 @@ public:
 		{
 			if ((old_estimated_accuracy - estimated_accuracy) == 0)
 			{
-				stuck_counter++;
-				if (stuck_counter > 4) // stuck for 4 epochs, heat up weights
-				{
-					heat_weights();
-					stuck_counter = 0;
-				}
+				heat_weights();
 			}
 		}
-		if (best_accuracy_count > 0)
-		{
-			set_learning_rate((0.99f)*get_learning_rate());
-			if(get_learning_rate()<0.000001f)
-				set_learning_rate(0.000001f);
-		}
-
 		old_estimated_accuracy = estimated_accuracy;
 		estimated_accuracy = 0;
 		//_skip_energy_level = 0.05;
 		_running_sum_E = 0;
 	}
 	
-	bool elvis_left_the_building()
-	{
-		if ((epoch_count>max_epochs) || (best_accuracy_count > 8)) return true;
-		else return false;
-	}
-
 	void end_epoch()
 	{
 		// run leftovers
 		sync_mini_batch();
 		epoch_count++;
 
-		estimated_accuracy = 0.995f*100.f*train_correct / train_samples;
-		//estimated_accuracy = (float)((int)(0.995f*estimated_accuracy * 10)) / 10.f; // reduce precision
-
-		if (train_correct > best_estimated_accuracy)
-		{
-			best_estimated_accuracy = (float)train_correct;
-			best_accuracy_count = 0;
-		}
-		else
-			best_accuracy_count++;
+		estimated_accuracy = 100.f*train_correct / train_samples;
+		estimated_accuracy = (float)((int)(0.995f*estimated_accuracy * 10)) / 10.f; // reduce precision
 
 	}
 
@@ -781,50 +728,18 @@ public:
 		if(label_index>=0 && label_index<layer->node.size()) target[label_index] = 1;
 
 		int layer_node_size = layer->node.size();
-
-		if ((std::string("sigmoid").compare(layer->p_act->name) == 0) && 
-			(std::string("cross_entropy").compare(_cost_function->name)==0))
+		for (int j = 0; j < layer_node_size; j++)
 		{
-			for (int j = 0; j < layer_node_size; j++)
-			{
-				// usually I'd apply the 'df' part later, but because of numerator/demoninator cancellations 
-				// which prevent a divide by zero issue, for this output layer, we'll do everything here.
-				layer->delta.x[j] = (layer->node.x[j]- target[j]);
-				float e = mse::cost(layer->node.x[j], target[j]);
+			//layer->delta.x[j] = cross_entropy::dE(layer->node.x[j], target[j]);
+			
+			layer->delta.x[j] = mse::dE(layer->node.x[j], target[j])*layer->df(layer->node.x, j, layer_node_size);;
+			float e = mse::E(layer->node.x[j], target[j]);
 
-				if (layer->node.x[max_j_out] < layer->node.x[j]) max_j_out = j;
-				// for better E maybe just look at 2 highest scores so zeros don't dominate 
-				E += e;
-			}
+			if (layer->node.x[max_j_out] < layer->node.x[j]) max_j_out = j;
+			// for better E maybe just look at 2 highest scores so zeros don't dominate 
+			E += e;
 		}
-		else if ((std::string("tanh").compare(layer->p_act->name) == 0) &&
-			(std::string("cross_entropy").compare(_cost_function->name) == 0))
-		{
-			for (int j = 0; j < layer_node_size; j++)
-			{
-				// usually I'd apply the 'df' part later, but because of numerator/demoninator cancellations 
-				// which prevent a divide by zero issue, for this output layer, we'll do everything here.
-				layer->delta.x[j] = 2.f*(layer->node.x[j] - target[j]);
-				float e = mse::cost(layer->node.x[j], target[j]);
 
-				if (layer->node.x[max_j_out] < layer->node.x[j]) max_j_out = j;
-				// for better E maybe just look at 2 highest scores so zeros don't dominate 
-				E += e;
-			}
-		}
-		else
-		{
-			for (int j = 0; j < layer_node_size; j++)
-			{
-
-				layer->delta.x[j] = _cost_function->d_cost(layer->node.x[j], target[j])*layer->df(layer->node.x, j, layer_node_size);;
-				float e = mse::cost(layer->node.x[j], target[j]);
-
-				if (layer->node.x[max_j_out] < layer->node.x[j]) max_j_out = j;
-				// for better E maybe just look at 2 highest scores so zeros don't dominate 
-				E += e;
-			}
-		}
 		E /= (float)layer->node.size();
 		if (E != E)
 		{

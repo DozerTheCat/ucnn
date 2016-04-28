@@ -27,9 +27,7 @@
 #pragma once
 
 #include <math.h>
-#include <string.h>
-#include <string>
-#include <cstdlib>
+
 
 namespace ucnn
 {
@@ -271,7 +269,7 @@ public:
 	}
 	void fill(float val) { for(int i=0; i<_size; i++) x[i]=val; }
 	// deep copy
-	inline matrix& operator =(const matrix &m)
+	inline ucnn::matrix& matrix::operator =(const ucnn::matrix &m)
 	{
 		resize(m.cols, m.rows, m.chans);
 		memcpy(x,m.x,sizeof(float)*_size);
@@ -287,7 +285,7 @@ public:
 	} 
 	
 	// dot vector to 2d mat
-	inline matrix dot_1dx2d(const matrix &m_2d) const
+	inline ucnn::matrix dot_1dx2d(const matrix &m_2d) const
 	{
 		ucnn::matrix v(m_2d.rows, 1, 1);
 		for(int j=0; j<m_2d.rows; j++)	v.x[j]=dot(x,&m_2d.x[j*m_2d.cols],_size);
@@ -295,31 +293,31 @@ public:
 	}
 	
 	// +=
-	inline matrix& operator+=(const matrix &m2){
+	inline ucnn::matrix& matrix::operator+=(const ucnn::matrix &m2){
 	  for(int i = 0; i < _size; i++) x[i] += m2.x[i];
 	  return *this;
 	}
 	// -=
-	inline matrix& operator-=(const matrix &m2) {
+	inline ucnn::matrix& matrix::operator-=(const ucnn::matrix &m2) {
 		for (int i = 0; i < _size; i++) x[i] -= m2.x[i];
 		return *this;
 	}
 	// *= float
-	inline matrix operator *=(const float v) {
+	inline ucnn::matrix matrix::operator *=(const float v) {
 		for (int i = 0; i < _size; i++) x[i] = x[i] * v;
 		return *this;
 	}
 	// * float
-	inline matrix operator *(const float v){
-		matrix T(cols,rows,1);
+	inline ucnn::matrix matrix::operator *(const float v){
+		ucnn::matrix T(cols,rows,1);
 	  for(int i = 0; i < _size; i++) T.x[i] = x[i] * v;
 	  return T;
 	}
 
 	// +
-	inline matrix operator +(matrix m2)
+	inline ucnn::matrix matrix::operator +(ucnn::matrix m2)
 	{
-		matrix T(cols,rows,chans);
+		ucnn::matrix T(cols,rows,chans);
 		for(int i = 0; i < _size; i++) T.x[i] = x[i] + m2.x[i]; 
 		return T;
 	}
