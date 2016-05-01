@@ -69,41 +69,7 @@ while(1)
 
 ```
 
-Example output from sample application:
+Example training log from sample application:
+![](https://github.com/DozerTheCat/ucnn/wiki/images/log_example.jpg)
 
-```
-==  MNIST  Epoch  1  ==================================================== 0:0:0
-  mini batch:           24
-  training time:        8.99951 seconds on 8 threads
-  model updates:        384 (15% of records)
-  estimated accuracy:   95.8583%
-  test accuracy:        98.44% (1.56001% error)
-  saved model:          ../models/tmp_1.txt
 
-==  MNIST  Epoch  2  ==================================================== 0:0:9
-  mini batch:           24
-  training time:        6.67038 seconds on 8 threads
-  model updates:        193 (7% of records)
-  estimated accuracy:   98.1418%
-  test accuracy:        98.77% (1.23% error)
-  saved model:          ../models/tmp_2.txt
-
-==  MNIST  Epoch  3  =================================================== 0:0:17
-  mini batch:           24
-  training time:        6.32536 seconds on 8 threads
-  model updates:        156 (6% of records)
-  estimated accuracy:   98.4768%
-  test accuracy:        98.98% (1.02% error)
-  saved model:          ../models/tmp_3.txt
-
-==  MNIST  Epoch  4  =================================================== 0:0:24
-  mini batch:           24
-  training time:        6.10435 seconds on 8 threads
-  model updates:        136 (5% of records)
-  estimated accuracy:   98.6808%
-  test accuracy:        99% (1% error)
-  saved model:          ../models/tmp_4.txt
-
-==  MNIST  Epoch  5  =================================================== 0:0:30
-
-```
