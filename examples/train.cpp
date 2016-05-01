@@ -114,7 +114,7 @@ int main()
 	if(!parse_train_data(data_path, train_images, train_labels)) {std::cerr << "error: could not parse data.\n"; return 1;}
 
 	// == setup the network  - when you train you must specify an optimizer ("sgd", "rmsprop", "adagrad")
-	ucnn::network cnn("adagrad"); 
+	ucnn::network cnn("sgd"); 
 	cnn.set_smart_training(true); // speed up training
 	
 	// configure network 
@@ -156,7 +156,6 @@ int main()
 		ucnn::progress progress(train_samples, "  training:\t\t");
 
 		cnn.start_epoch("cross_entropy");
-		cnn.normalize_weights();
 
 		for (int k = 0; k<train_samples; k++)
 		{
@@ -196,7 +195,7 @@ int main()
 		// can't seem to improve
 		if (cnn.elvis_left_the_building())
 		{
-			std::cout << "Elvis just left the building. No further improvement in training found.  Stopping.." << std::endl;
+			std::cout << "Elvis just left the building. No further improvement in training found.\nStopping.." << std::endl;
 			break;
 		}
 

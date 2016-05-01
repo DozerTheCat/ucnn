@@ -43,14 +43,14 @@
 #include "CIFAR.h"
 
 // by selecting a different namespace, we'll call different data parsing functions below
-//*
+/*
 using namespace MNIST;
 std::string data_path="../data/mnist/";
 std::string model_file="../models/uCNN_MNIST.txt";
 /*/
 using namespace CIFAR10;
 std::string data_path="../data/cifar-10-batches-bin/";
-std::string model_file="../models/uCNN_CIFAR-10.txt";
+std::string model_file="../models/ucnn_cifar_dropout.txt";
 //*/
 
 void test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images, const std::vector<int> &test_labels)
@@ -95,6 +95,7 @@ int main()
 	// load model
 	if(!cnn.read(model_file)) {std::cerr << "error: could not read model.\n"; return 1;}
 
+	std::cout << cnn.get_layer_configuration() << std::endl;
 	// == run the test
 	std::cout << "Testing " << data_name() << ":" << std::endl;
 	// this function will loop through all images, call predict, and print out stats
