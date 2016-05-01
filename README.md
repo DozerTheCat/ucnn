@@ -1,10 +1,10 @@
-# μCNN (micro Convolutional Neural Network)
+# μcnn (micro convolutional neural network)
 
-An efficient C++ CNN implementation that was built with the goal to balance hack-ability, functionality, and speed.  It was a learning exercise inspired partially by tiny-cnn, which is a wonderful alternative to this code, and partially by my frustration trying to find a minimal CNN package that easily builds in Visual Studio.  μCNN is in readable C++ with old fashioned C tricks for optimized and portable code (optionally OpenMP and SSE3 speedups can be used). There are just a handful (7 or 8) header files required.  Being a minimal CPU solution, it is not designed to scale over a cluster to train very deep models. For that, go with GPUs and Caffe, TensorFlow, CMTK, Torch, etc…  μCNN is competitive with other CPU training options and can train usable models for most general object detection and object recognition problems.
+μcnn is an efficient C++ CNN implementation that was built with the goal to balance hack-ability, functionality, and speed.  Consisting of only a handful of header files, μcnn is in portable C++ with old fashioned C tricks for optimization. With optional OpenMP and SSE3 speedups enabled it's speed is competitive with other CPU based CNN frameworks. Being a minimal CPU solution, it is not designed to scale over a cluster to train very deep models (for that, go with GPUs and Caffe, TensorFlow, CMTK, Torch, etc…)
 
-The API provides a 'smart training' option which abstracts the management of the training process but still provides the flexibility to handle the input data and threading. μCNN's 'smart training' can give 99% accuracy on MNIST in about a 20 seconds. 
+The μcnn API provides a 'smart training' option which abstracts the management of the training process but still provides the flexibility to handle the threading and input data as you'd like. Just make a loop and pass in training samples until μcnn says stop. On the standard MNIST handwritten digit database, μcnn's 'smart training' gives 99% accuracy in about a 20 seconds. 
 
-μCNN was tested with MS Developer Studio 2010, 2015, and Cygwin g++ 5.3.0. It should be fairly portable with little work. 
+Latest change status is on the [μcnn wiki](https://github.com/DozerTheCat/ucnn/wiki). 
 
 Features:
 + Layers:  Input, Fully Connected, Convolution, Max Pool, Dropout, (Fractional Max Pool, Stocastic Pooling, Concatenation all in progress)
@@ -15,6 +15,7 @@ Features:
 + Architecture: Branching allowed
 + Solver: Smart training optimizes parameters, speeds up training, and provides exit criteria.
 + Image Support: optional OpenCV utilities (in progress)
++ Portable: tested with MS Developer Studio 2010, 2015, and Cygwin g++ 5.3.0. 
 + Logging: html training report
 
 API Examples:
