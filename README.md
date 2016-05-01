@@ -15,6 +15,7 @@ Features:
 + Architecture: Branching allowed
 + Solver: Smart training optimizes parameters, speeds up training, and provides exit criteria.
 + Image Support: optional OpenCV utilities (in progress)
++ Logging: html training report
 
 API Examples:
 Load model and perform prediction:
