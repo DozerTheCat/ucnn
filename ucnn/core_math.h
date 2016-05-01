@@ -27,25 +27,179 @@
 #pragma once
 
 #include <math.h>
-
+#include <string.h>
+#include <string>
+#include <cstdlib>
 
 namespace ucnn
 {
 
-inline float dot(const float *x1, const float *x2, const int size)	
-{	
-	switch(size)
+inline float dot(const float *x1, const float *x2, const int size)
+{
+	switch (size)
 	{
-	case 1: return x1[0]*x2[0]; 
-	case 2: return x1[0]*x2[0]+x1[1]*x2[1]; 
-	case 3: return x1[0]*x2[0]+x1[1]*x2[1]+x1[2]*x2[2]; 
-	case 4: return x1[0]*x2[0]+x1[1]*x2[1]+x1[2]*x2[2]+x1[3]*x2[3]; 
-	case 5: return x1[0]*x2[0]+x1[1]*x2[1]+x1[2]*x2[2]+x1[3]*x2[3]+x1[4]*x2[4]; 
-	default: 
-		float v=0;
-		for(int i=0; i<size; i++) v+=x1[i]*x2[i];
+	case 1: return x1[0] * x2[0];
+	case 2: return x1[0] * x2[0] + x1[1] * x2[1];
+	case 3: return x1[0] * x2[0] + x1[1] * x2[1] + x1[2] * x2[2];
+	case 4: return x1[0] * x2[0] + x1[1] * x2[1] + x1[2] * x2[2] + x1[3] * x2[3];
+	case 5: return x1[0] * x2[0] + x1[1] * x2[1] + x1[2] * x2[2] + x1[3] * x2[3] + x1[4] * x2[4];
+	default:
+		float v = 0;
+		for (int i = 0; i<size; i++) v += x1[i] * x2[i];
 		return v;
 	};
+}
+
+
+inline void unwrap_5x5(float *aligned_out, const float *in, const int in_size)
+{
+	float *img = aligned_out;
+	const int node_size = in_size - 5 + 1;
+	for (int j = 0; j < node_size; j += 1)//stride) // intput w
+	{
+		for (int i = 0; i < node_size; i += 1)//stride) // intput w
+		{
+			const float *tn = in + j*in_size + i;
+			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
+			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
+			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
+			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
+			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
+			memset(img, 0, 3 * sizeof(float)); img += 3; // junk pad
+		}
+	}
+}
+
+inline void dot_unwrapped_5x5(const float *_img, const float *filter_ptr, float *out, const int outsize)
+{
+	const float *_filt = filter_ptr;
+	for (int j = 0; j < outsize; j += 1)//stride) // intput w
+	{
+		float c0 = _img[0] * _filt[0] + _img[1] * _filt[1] + _img[2] * _filt[2] + _img[3] * _filt[3];
+		_img += 4; _filt += 4;
+		c0 += _img[0] * _filt[0] + _img[1] * _filt[1] + _img[2] * _filt[2] + _img[3] * _filt[3];
+		_img += 4; _filt += 4;
+		c0 += _img[0] * _filt[0] + _img[1] * _filt[1] + _img[2] * _filt[2] + _img[3] * _filt[3];
+		_img += 4; _filt += 4;
+		c0 += _img[0] * _filt[0] + _img[1] * _filt[1] + _img[2] * _filt[2] + _img[3] * _filt[3];
+		_img += 4; _filt += 4;
+		c0 += _img[0] * _filt[0] + _img[1] * _filt[1] + _img[2] * _filt[2] + _img[3] * _filt[3];
+		_img += 4; _filt += 4;
+		c0 += _img[0] * _filt[0] + _img[1] * _filt[1] + _img[2] * _filt[2] + _img[3] * _filt[3];
+		_img += 4; _filt += 4;
+		c0 += _img[0] * _filt[0];// +_img[1] * _filt[1] + _img[2] * _filt[2] + _img[3] * _filt[3];
+		_img += 4; _filt = filter_ptr;
+		out[j] = c0;
+	}
+}
+
+inline void dot_unwrapped_5x5_sse(const float *_img, const float *filter_ptr, float *out, const int outsize)
+{
+	_mm_prefetch((const char *)(out), _MM_HINT_T0);
+	for (int j = 0; j < outsize; j += 1)//stride) // intput w
+	{
+		__m128 a, b, c0, c1;
+		//_mm_prefetch((const char *)(filter_ptr + 12), _MM_HINT_T0);
+		a = _mm_load_ps(_img); b = _mm_load_ps(filter_ptr);
+		c0 = _mm_mul_ps(a, b);
+
+		a = _mm_load_ps(_img + 4); b = _mm_load_ps(filter_ptr + 4);
+		c1 = _mm_mul_ps(a, b);
+		c0 = _mm_add_ps(c0, c1);
+
+		a = _mm_load_ps(_img + 8); b = _mm_load_ps(filter_ptr + 8);
+		c1 = _mm_mul_ps(a, b);
+		c0 = _mm_add_ps(c0, c1);
+
+		a = _mm_load_ps(_img + 12); b = _mm_load_ps(filter_ptr + 12);
+		c1 = _mm_mul_ps(a, b);
+		c0 = _mm_add_ps(c0, c1);
+
+		a = _mm_load_ps(_img + 16); b = _mm_load_ps(filter_ptr + 16);
+		c1 = _mm_mul_ps(a, b);
+		c0 = _mm_add_ps(c0, c1);
+
+		a = _mm_load_ps(_img + 20); b = _mm_load_ps(filter_ptr + 20);
+		c1 = _mm_mul_ps(a, b);
+		c0 = _mm_add_ps(c0, c1);
+
+		a = _mm_load_ps(_img + 24); b = _mm_load_ps(filter_ptr + 24);
+		c1 = _mm_mul_ps(a, b);
+		c0 = _mm_add_ps(c0, c1);
+
+		c0 = _mm_hadd_ps(c0, c0);
+		c0 = _mm_hadd_ps(c0, c0);
+
+		_mm_store_ss(&out[j], c0);
+		_img += 28;
+	}
+}
+
+inline void unwrap_3x3(float *aligned_out, const float *in, const int in_size)
+{
+	float *img = aligned_out;
+	const int node_size = in_size - 3 + 1;
+	for (int j = 0; j < node_size; j += 1)//stride) // intput w
+	{
+		for (int i = 0; i < node_size; i += 1)//stride) // intput w
+		{
+			const float *tn = in + j*in_size + i;
+			memcpy(img, tn, 3 * sizeof(float)); tn += in_size; img += 3;
+			memcpy(img, tn, 3 * sizeof(float)); tn += in_size; img += 3;
+			memcpy(img, tn, 3 * sizeof(float)); tn += in_size; img += 3;
+			memset(img, 0, 3 * sizeof(float)); img += 3; // junk pad
+		}
+	}
+}
+
+inline void dot_unwrapped_3x3_sse(const float *_img, const float *filter_ptr, float *out, const int outsize)
+{
+	_mm_prefetch((const char *)(out), _MM_HINT_T0);
+	for (int j = 0; j < outsize; j += 1)//stride) // intput w
+	{
+		__m128 a, b, c0, c1;
+		_mm_prefetch((const char *)(out + j), _MM_HINT_T0);
+		a = _mm_load_ps(_img); b = _mm_load_ps(filter_ptr);
+		c0 = _mm_mul_ps(a, b);
+
+		a = _mm_load_ps(_img + 4); b = _mm_load_ps(filter_ptr + 4);
+		c1 = _mm_mul_ps(a, b);
+		c0 = _mm_add_ps(c0, c1);
+
+		a = _mm_load_ps(_img + 8); b = _mm_load_ps(filter_ptr + 8);
+		c1 = _mm_mul_ps(a, b);
+		c0 = _mm_add_ps(c0, c1);
+
+		c0 = _mm_hadd_ps(c0, c0);
+		c0 = _mm_hadd_ps(c0, c0);
+
+		_mm_store_ss(&out[j], c0);
+
+		_img += 12;
+	}
+}
+
+inline void dot_unwrapped_sse(const float *_img, const float *filter_ptr, float *out, const int outsize, const int filtersize)
+{
+	__m128 a, b, c0, c1;
+	for (int j = 0; j < outsize; j += 1)//stride) // intput w
+	{
+		_mm_prefetch((const char *)(out + j), _MM_HINT_T0);
+		a = _mm_load_ps(_img); b = _mm_load_ps(filter_ptr);
+		c0 = _mm_mul_ps(a, b);
+		for (int i = 4; i < filtersize; i += 4)
+		{
+			a = _mm_load_ps(_img + i); b = _mm_load_ps(filter_ptr + i);
+			c1 = _mm_mul_ps(a, b);
+			c0 = _mm_add_ps(c0, c1);
+		}
+
+		c0 = _mm_hadd_ps(c0, c0);
+		c0 = _mm_hadd_ps(c0, c0);
+		_mm_store_ss(&out[j], c0);
+
+		_img += filtersize;
+	}
 }
 
 // second item is rotated 180 (this is a convolution)
@@ -71,16 +225,17 @@ inline float unwrap_2d_dot(const float *x1, const float *x2, const int size, int
 	float v=0;	
 
 	for(int j=0; j<size; j++) 
-	{
 		v+= dot(&x1[stride1*j],&x2[stride2*j],size);
-	}
 	return v;
 }
 
+//#include <smmintrin.h>
+
 inline float unwrap_2d_dot_5x5(const float *x1, const float *x2,  int stride1, int stride2)	
-{	
-	const float *f1=&x1[0]; const float *f2=&x2[0];
-	float v= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; f1+=stride1; f2+=stride2;
+{
+	const float *f1 = &x1[0]; const float *f2 = &x2[0];
+	float v;
+	v = f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; f1+=stride1; f2+=stride2;
 	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; f1+=stride1; f2+=stride2;
 	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; f1+=stride1; f2+=stride2;
 	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]+f1[3]*f2[3]+f1[4]*f2[4]; f1+=stride1; f2+=stride2;
@@ -91,7 +246,8 @@ inline float unwrap_2d_dot_5x5(const float *x1, const float *x2,  int stride1, i
 inline float unwrap_2d_dot_3x3(const float *x1, const float *x2,  int stride1, int stride2)	
 {	
 	const float *f1=&x1[0]; const float *f2=&x2[0];
-	float v = f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]; f1+=stride1; f2+=stride2;
+	float v;
+	v = f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]; f1+=stride1; f2+=stride2;
 	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]; f1+=stride1; f2+=stride2;
 	v+= f1[0]*f2[0]+f1[1]*f2[1]+f1[2]*f2[2]; 
 	return v;
@@ -148,7 +304,8 @@ public:
 	{
 		_size=cols*rows*chans; _capacity=_size; x = new float[_size]; 
 		if(data!=NULL) memcpy(x,data,_size*sizeof(float));
-	}//v=std::vector<float>(cols*rows*chans); x=(float*)v.data();}
+	}
+
 	// copy constructor - deep copy
 	matrix( const matrix &m) : cols(m.cols), rows(m.rows), chans(m.chans), _size(m._size), _capacity(m._size)   {x = new float[_size]; memcpy(x,m.x,sizeof(float)*_size); } // { v=m.v; x=(float*)v.data();}
 	// copy and pad constructor
@@ -173,8 +330,8 @@ public:
 		return matrix(cols,rows,1,&x[channel*cols*rows]);	
 	}
 
-
-	matrix pad(int dx, int dy, int edge_pad)
+	// if edge_pad==0, then the padded area is just 0. Otherwise it fills with edge pixel colors
+	matrix pad(int dx, int dy, int edge_pad=0)
 	{
 		matrix v(cols+2*dx,rows+2*dy,chans);
 		v.fill(0);
@@ -199,7 +356,7 @@ public:
 			// top bottom pad
 			if(edge_pad)
 			{
-				for(int j=0; j<dx; j++)
+				for(int j=0; j<dy; j++)
 				{
 					memcpy(&v.x[(j)*v.cols+v_chan_offset],&v.x[(dy)*v.cols+v_chan_offset], sizeof(float)*v.cols);
 					memcpy(&v.x[(j+dy+rows)*v.cols+v_chan_offset], &v.x[(rows-1+dy)*v.cols+v_chan_offset], sizeof(float)*v.cols);
@@ -247,6 +404,33 @@ public:
 		return v;
 	}
 
+	void clip(float min, float max)
+	{
+		int s = rows*cols*chans;
+		for (int i = 0; i < s; i++)
+		{
+			if (x[i] < min) x[i] = min;
+			if (x[i] > max) x[i]=max;
+		}
+	}
+
+
+	void min_max(float *min, float *max, int *min_i=NULL, int *max_i=NULL)
+	{
+		int s = rows*cols*chans;
+		int mini = 0;
+		int maxi = 0; 
+		for (int i = 0; i < s; i++)
+		{
+			if (x[i] < x[mini]) mini = i;
+			if (x[i] > x[maxi]) maxi = i;
+		}
+		*min = x[mini];
+		*max = x[maxi];
+		if (min_i) *min_i = mini;
+		if (max_i) *max_i = maxi;
+	}
+
 	float remove_mean(int channel)
 	{
 		int s = rows*cols;
@@ -257,6 +441,7 @@ public:
 		for(int i=0; i<s; i++) x[i+offset]-=average;		
 		return average;
 	}
+
 	float remove_mean()
 	{
 		int s = rows*cols*chans;
@@ -269,7 +454,7 @@ public:
 	}
 	void fill(float val) { for(int i=0; i<_size; i++) x[i]=val; }
 	// deep copy
-	inline ucnn::matrix& matrix::operator =(const ucnn::matrix &m)
+	inline matrix& operator =(const matrix &m)
 	{
 		resize(m.cols, m.rows, m.chans);
 		memcpy(x,m.x,sizeof(float)*_size);
@@ -285,39 +470,39 @@ public:
 	} 
 	
 	// dot vector to 2d mat
-	inline ucnn::matrix dot_1dx2d(const matrix &m_2d) const
+	inline matrix dot_1dx2d(const matrix &m_2d) const
 	{
 		ucnn::matrix v(m_2d.rows, 1, 1);
 		for(int j=0; j<m_2d.rows; j++)	v.x[j]=dot(x,&m_2d.x[j*m_2d.cols],_size);
 		return v;
 	}
-	
+
 	// +=
-	inline ucnn::matrix& matrix::operator+=(const ucnn::matrix &m2){
+	inline matrix& operator+=(const matrix &m2){
 	  for(int i = 0; i < _size; i++) x[i] += m2.x[i];
 	  return *this;
 	}
 	// -=
-	inline ucnn::matrix& matrix::operator-=(const ucnn::matrix &m2) {
+	inline matrix& operator-=(const matrix &m2) {
 		for (int i = 0; i < _size; i++) x[i] -= m2.x[i];
 		return *this;
 	}
 	// *= float
-	inline ucnn::matrix matrix::operator *=(const float v) {
+	inline matrix operator *=(const float v) {
 		for (int i = 0; i < _size; i++) x[i] = x[i] * v;
 		return *this;
 	}
 	// * float
-	inline ucnn::matrix matrix::operator *(const float v){
-		ucnn::matrix T(cols,rows,1);
+	inline matrix operator *(const float v){
+		matrix T(cols,rows,1);
 	  for(int i = 0; i < _size; i++) T.x[i] = x[i] * v;
 	  return T;
 	}
 
 	// +
-	inline ucnn::matrix matrix::operator +(ucnn::matrix m2)
+	inline matrix operator +(matrix m2)
 	{
-		ucnn::matrix T(cols,rows,chans);
+		matrix T(cols,rows,chans);
 		for(int i = 0; i < _size; i++) T.x[i] = x[i] + m2.x[i]; 
 		return T;
 	}

@@ -28,23 +28,15 @@
 #include <random>
 #include <string>
 #include <iostream> // cout
+#include <fstream>
 #include <sstream>
 #include <map>
 #include <vector>
 
-#include "ucnn.h"
-#include "activation.h"
 #include "layer.h"
-#include "loss.h"
 #include "optimizer.h"
-
-#ifdef _WIN32
-    #include <windows.h>
-    void sleep(unsigned milliseconds){ Sleep(milliseconds);}
-#else
-    #include <unistd.h>
-    void sleep(unsigned milliseconds) {usleep(milliseconds * 1000);}
-#endif
+#include "activation.h"
+#include "cost.h"
 
 // hack for VS2010 to handle c++11 for(:)
 #if (_MSC_VER  == 1600)
@@ -59,9 +51,18 @@
 	#endif
 #endif
 
-
 namespace ucnn {
 
+#define bail(txt) {std::cerr << txt; throw;}
+
+// sleep needed for threading
+#ifdef _WIN32
+#include <windows.h>
+	void ucnn_sleep(unsigned milliseconds) { Sleep(milliseconds); }
+#else
+#include <unistd.h>
+	void ucnn_sleep(unsigned milliseconds) { usleep(milliseconds * 1000); }
+#endif
 
 // returns Energy (euclidian distance / 2) and max index
 float match_labels(const float *out, const float *target, const int size, int *best_index = NULL)
@@ -77,37 +78,36 @@ float match_labels(const float *out, const float *target, const int size, int *b
 	E *= 0.5;
 	return E;
 }
-
+// returns index of highest value (argmax)
 int max_index(const float *out, const int size)
 {
 	int max_j = 0;
-	for (int j = 0; j<size; j++)
-	{
-		if (out[max_j]<out[j]) max_j = j;
-	}
+	for (int j = 0; j<size; j++) if (out[max_j]<out[j]) max_j = j;
 	return max_j;
 }
 
 //----------------------------------------------------------------------
-// net - class that holds all the layers and connection information
+//  network  
+//  - class that holds all the layers and connection information
 //	- runs forward prediction
-//  - with INCLUDE_TRAINING_CODE define can run backpropogation
 
 class network
 {
 	
 	int _size;  // output size
 	int _thread_count; // determines number of layer sets (copys of layers)
+	const int MAIN_LAYER_SET = 0;
+
+	// training related stuff
 	int _batch_size;   // determines number of dW sets 
 	float _skip_energy_level;
 	bool _smart_train;
 	std::vector <float> _running_E;
 	double _running_sum_E;
-
+	cost_function *_cost_function;
 	optimizer *_optimizer;
-	const int MAIN_LAYER_SET=0;
-	const unsigned char BATCH_RESERVED=1, BATCH_FREE=0, BATCH_COMPLETE=2;
-	const int BATCH_FILLED_COMPLETE=-2, BATCH_FILLED_IN_PROCESS=-1;
+	const unsigned char BATCH_RESERVED = 1, BATCH_FREE = 0, BATCH_COMPLETE = 2;
+	const int BATCH_FILLED_COMPLETE = -2, BATCH_FILLED_IN_PROCESS = -1;
 #ifdef UCNN_OMP
 	omp_lock_t _lock_batch;
 	void lock_batch() {omp_set_lock(&_lock_batch);}
@@ -124,31 +124,38 @@ class network
 #endif
 
 public:	
-
+	// training progress stuff
 	int train_correct;
 	int train_skipped;
+	int stuck_counter;
 	int train_updates;
 	int train_samples;
 	int epoch_count;
+	int max_epochs;
+	float best_estimated_accuracy;
+	int best_accuracy_count;
 	float old_estimated_accuracy;
 	float estimated_accuracy;
 
-	// here we have multiple sets of the layers to allow threading and batch processing 
+	// here we have multiple sets of the layers to allow threading and batch processing
+	// a separate layer set is needed for each independent thread
 	std::vector< std::vector<base_layer *>> layer_sets;
-	// name to index of layers for layer management
-	std::map<std::string, int> layer_map; 
-	// these are the weights between layers (not stored in the layer cause I look at them as the graph in the net)
-	std::vector<matrix *> W;
+	
+	std::map<std::string, int> layer_map;  // name-to-index of layer for layer management
+	std::vector<std::pair<std::string, std::string>> layer_graph; // pairs of names of layers that are connected
+	std::vector<matrix *> W; // these are the weights between/connecting layers 
+
+	// these sets are needed because we need copies for each item in mini-batch
 	std::vector< std::vector<matrix>> dW_sets; // only for training, will have _batch_size of these
 	std::vector< std::vector<matrix>> dbias_sets; // only for training, will have _batch_size of these
-	std::vector< unsigned char > batch_open; // only for training, will have _batch_size of these
+	std::vector< unsigned char > batch_open; // only for training, will have _batch_size of these	
 	
-	std::vector<std::pair<std::string,std::string>> layer_graph;
 
-	network(const char* opt_name=NULL): _thread_count(1), _skip_energy_level(0.f), _batch_size(1) //, MAX_UCNN_BATCH(1) 
+	network(const char* opt_name=NULL): _thread_count(1), _skip_energy_level(0.f), _batch_size(1) 
 	{ 
 		_size=0;  
 		_optimizer = new_optimizer(opt_name);
+		_cost_function = NULL;
 		//std::vector<base_layer *> layer_set;
 		//layer_sets.push_back(layer_set);
 		layer_sets.resize(1);
@@ -160,11 +167,14 @@ public:
 		train_samples = 0;
 		train_skipped = 0;
 		epoch_count = 0; 
+		max_epochs = 1000;
 		train_updates = 0;
 		estimated_accuracy = 0;
 		old_estimated_accuracy = 0;
+		stuck_counter = 0;
+		best_estimated_accuracy=0;
+		best_accuracy_count=0;
 		init_lock();
-
 #ifdef USE_AF
 		af::setDevice(0);
         af::info();
@@ -173,11 +183,13 @@ public:
 	
 	~network() 
 	{
-		clear(); 
+		clear();
+		if (_cost_function) delete _cost_function;
 		if(_optimizer) delete _optimizer; 
 		destroy_lock();	
 	}
 
+	// call clear if you want to load a different configuration/model
 	void clear()
 	{
 		for(int i=0; i<(int)layer_sets.size(); i++)
@@ -204,161 +216,44 @@ public:
 	}
 
 	// sets up number of layer copies to run over multiple threads
+	// must call this with max thread count before constructing layers
 	void allow_threads(int threads=1)
 	{
 		if(threads<1) _thread_count=1; else _thread_count=threads;
 		int layer_cnt = (int)layer_sets.size();
 
-		if (layer_cnt<_thread_count) 
-		{
-			layer_sets.resize(_thread_count);
-		}
+		if (layer_cnt<_thread_count) layer_sets.resize(_thread_count);
 		// ToDo: add shrink back /  else if(layer_cnt>_thread_count)
 		sync_layer_sets();
 	}
 
-	// when using threads, need to get bias data synched between all layer sets, call after bias update in main layer set
+	// when using threads, need to get bias data synched between all layer sets, 
+	// call this after bias update in main layer set to copy the bias to the other sets
 	void sync_layer_sets()
 	{
 		for(int i=1; i<(int)layer_sets.size();i++)
-		{
 			for(int j=0; j<(int)layer_sets[MAIN_LAYER_SET].size(); j++)
-			{
 				for(int k=0; k<layer_sets[MAIN_LAYER_SET][j]->bias.size(); k++) 
 					(layer_sets[i])[j]->bias.x[k]=(layer_sets[MAIN_LAYER_SET])[j]->bias.x[k];
-			}
-		}
-	}
-
-	// sets up number of mini batches (storage for sets of weight deltas)
-	// for now we will not persist these dW in memory, 
-	void set_mini_batch_size(int batch_cnt)
-	{
-		if(batch_cnt<1) batch_cnt=1;
-		_batch_size = batch_cnt;
-		dW_sets.resize(_batch_size);
-		dbias_sets.resize(_batch_size);
-		batch_open.resize(_batch_size); reset_mini_batch();
-		//_batch_index=0;
-	}
-	int get_mini_batch_size() {return _batch_size;}
-
-	// return index of next free batch
-	// or returns -2 if no free batches - all complete (need a sync call)
-	// or returns -1 if no free batches - some still in progress (wait to see if one frees)
-	int get_next_open_batch()
-	{
-		int reserved=0;
-		int filled=0;
-		for(int i=0; i<batch_open.size(); i++)
-		{
-			if(batch_open[i]==BATCH_FREE) return i;
-			if(batch_open[i]==BATCH_RESERVED) reserved++;
-			if(batch_open[i]==BATCH_COMPLETE) filled++;
-		}
-		if(reserved>0) return BATCH_FILLED_IN_PROCESS; // all filled but wainting for reserves
-		if(filled==batch_open.size()) return BATCH_FILLED_COMPLETE; // all filled and complete
-		throw;
-			//return -3; // ?
-	}
-
-	void reset_mini_batch()
-	{
-		memset(batch_open.data(),BATCH_FREE,batch_open.size());
-	}
-
-	// apply all weights to first set of dW, then apply to model weights 
-	void sync_mini_batch(int last_batch_index=-1) 
-	{
-		// need to ensure no batches in progress (reserved)
-		int next = get_next_open_batch();
-		if(next==-1) throw;
-	
-
-		int layer_cnt = (int)layer_sets[MAIN_LAYER_SET].size();
-		
-		//if(last_batch_index==-1) last_batch_index=_batch_index-1;
-		// calc delta for last layer to prop back up through network
-		// d = (target-out)* grad_activiation(out)
-		base_layer *layer;// = layer_sets[MAIN_LAYER_SET][layer_cnt-1];
-
-		// sum contributions 
-		for(int k=layer_cnt-1; k>=0; k--)	
-		{
-			layer = layer_sets[MAIN_LAYER_SET][k];
-			__for__ (auto &link __in__ layer->backward_linked_layers)
-			{
-				int w_index = (int)link.first;
-
-				if(batch_open[0]==BATCH_FREE) dW_sets[0][w_index].fill(0);
-				
-				for(int b=1; b< _batch_size; b++)
-				{
-					if(batch_open[b]==BATCH_COMPLETE)
-						dW_sets[0][w_index]+=dW_sets[b][w_index];
-				}
-			}
-			if( dynamic_cast<convolution_layer*> (layer) != NULL)  continue;
-			
-			if(batch_open[0]==BATCH_FREE) dbias_sets[0][k].fill(0);
-			for(int b=1; b< _batch_size; b++)
-			{
-				if(batch_open[b]==BATCH_COMPLETE)
-					dbias_sets[0][k]+=dbias_sets[b][k];
-			}
-		}
-
-		// update weights
-		for(int k=layer_cnt-1; k>=0; k--)	
-		{
-			layer = layer_sets[MAIN_LAYER_SET][k];
-			__for__ (auto &link __in__ layer->backward_linked_layers)
-			{
-				int w_index = (int)link.first;
-				if(dW_sets[0][w_index].size()>0)
-					_optimizer->increment_w( W[w_index],w_index,  dW_sets[0][w_index]);  // -- 10%
-			}
-			if( dynamic_cast<convolution_layer*> (layer) != NULL)  continue;
-			for(int j=0; j<layer->bias.size(); j++)
-				layer->bias.x[j] -= dbias_sets[0][k].x[j]* _optimizer->learning_rate;
-		}
-
-		// start over
-		reset_mini_batch();
-		train_updates++; // sometimes may have no updates, .. so this is not exact
-		//_batch_index=0;
-		sync_layer_sets();
-
-	}
-
-	// used to remove mean from weight
-	void normalize_weights()
-	{
-		__for__(auto w __in__ W) 
-		{
-			if(w->chans>1) 
-			w->remove_mean();
-	//		if(w->chans>1) 	for(int c=0; c<w->chans; c++) w->remove_mean(c);
-		}
 	}
 
 	// used to add some noise to weights
 	void heat_weights(float std=0.001f)
 	{
 		static std::mt19937 gen(1);
-		//std::uniform_real_distribution<float> dst(-std, std);
 		std::normal_distribution<float> dst(0, std);
 		__for__(auto w __in__ W) 
 			for(int c=0; c<w->size(); c++) 
-				w->x[c]*=(1.f+dst(gen));  //w->x[c]+=dst(gen);
+				w->x[c]*=(1.f+dst(gen)); 
 	}
 
 	// used to push a layer back in the ORDERED list of layers
 	// if connect_all() is used, then the order of the push_back is used to connect the layers
-	// when forward or backward propogation, this order is used for serialized order of calculations 
+	// when forward or backward propogation, this order is used for the serialized order of calculations 
+	// Layer_name must be unique.
 	bool push_back(const char *layer_name, const char *layer_config)
 	{
-		if(layer_map[layer_name]!=NULL) return false;
+		if(layer_map[layer_name]) return false; //already exists
 		base_layer *l=new_layer(layer_name, layer_config);
 		// set map to index
 
@@ -368,18 +263,23 @@ public:
 			std::vector<base_layer *> layer_set;
 			layer_sets.push_back(layer_set);
 		}
+		// make sure layer_sets are created
 		allow_threads(_thread_count);
 
 		layer_map[layer_name] = (int)layer_sets[MAIN_LAYER_SET].size();
 		layer_sets[MAIN_LAYER_SET].push_back(l);
 		// upadate as potential last layer - so it sets the out size
 		_size=l->fan_size();
-		for(int i=1; i<(int)layer_sets.size();i++)
-			layer_sets[i].push_back(new_layer(layer_name, layer_config));
+		// add other copies needed for threading
+		for(int i=1; i<(int)layer_sets.size();i++) layer_sets[i].push_back(new_layer(layer_name, layer_config));
 		return true;
 	}
 
 	// connect 2 layers together and initialize weights
+	// top and bottom concepts are reversed from literature
+	// my 'top' is the input of a forward() pass and the 'bottom' is the output
+	// perhaps 'top' traditionally comes from the brain model, but my 'top' comes
+	// from reading order (information flows top to bottom)
 	void connect(const char *layer_name_top, const char *layer_name_bottom) 
 	{
 		size_t i_top=layer_map[layer_name_top];
@@ -409,13 +309,13 @@ public:
 		// ToDo: this may be broke when 2 layers connect to one. need to fix (i.e. resnet)
 		// after all connections, run through and do weights with correct fan count
 
-		// initialize weights
+		// initialize weights - ToDo: separate and allow users to configure(?)
 		static std::mt19937 gen(1);
 		if(strcmp(l_bottom->p_act->name,"tanh")==0)
 		{
 			// xavier : for tanh
 			float weight_base = (float)(std::sqrt(6./( (double)fan_in+(double)fan_out)));
-//			float weight_base = (float)(std::sqrt(.25/( (double)fan_in)));
+	//		float weight_base = (float)(std::sqrt(.25/( (double)fan_in)));
 			std::uniform_real_distribution<float> dst(-weight_base, weight_base);
 			for(int i=0; i<w->size(); i++) w->x[i]=dst(gen);
 		}
@@ -431,6 +331,7 @@ public:
 		{
 			// he : for relu
 			float weight_base = (float)(std::sqrt(2./(double)fan_in));
+
 			std::normal_distribution<float> dst(0, weight_base);
 			for(int i=0; i<w->size(); i++) w->x[i]=dst(gen);
 		}
@@ -444,62 +345,77 @@ public:
 	}
 
 	// automatically connect all layers in the order they were provided 
-	// easy way to go, but can't deal with highway/resnet/inception types of architectures
+	// easy way to go, but can't deal with branch/highway/resnet/inception types of architectures
 	void connect_all()
 	{	
 		for(int j=0; j<(int)layer_sets[MAIN_LAYER_SET].size()-1; j++) connect(layer_sets[MAIN_LAYER_SET][j]->name.c_str(), layer_sets[MAIN_LAYER_SET][j+1]->name.c_str());
 	}
 
+	// get the list of layers used (but not connection information)
+	std::string get_configuration()
+	{
+		std::string str;
+
+		for (int j = 0; j<(int)layer_sets[MAIN_LAYER_SET].size(); j++)
+			str+= layer_sets[MAIN_LAYER_SET][j]->name +" : " + layer_sets[MAIN_LAYER_SET][j]->get_config_string();
+
+		str += "\n";
+		for (int j = 0; j<(int)layer_graph.size(); j++)
+			str+= layer_graph[j].first+"-"+layer_graph[j].second +",";
+		str += "\n\n";
+		return str;
+	}
+
+	// performs forward pass and returns class index
 	// do not delete or modify the returned pointer. it is a live pointer to the last layer in the network
+	// if calling over multiple threads, provide the thread index since the interal data is not otherwise thread safe
 	int predict_class(const float *in, int _thread_number = -1)
 	{
 		const float* out = forward(in, _thread_number);
 		return max_index(out, out_size());
-
 	}
-	float* forward(const float *in, int _thread_number=-1)
+
+	// the main forward pass 
+	// if calling over multiple threads, provide the thread index since the interal data is not otherwise thread safe
+	// train parameter is used to designate the forward pass is used in training (it turns on dropout layers, etc..)
+	float* forward(const float *in, int _thread_number=-1, int _train=0)
 	{
-
 		if(_thread_number<0) _thread_number=get_thread_num();
-		if(_thread_number>_thread_count) throw;
+		if (_thread_number > _thread_count) bail("needed to call allow_threads()");
+		if (_thread_number >= (int)layer_sets.size()) bail("needed to call allow_threads()");
 
-		const int thread_number=_thread_number;
+		// clear nodes to zero 
+		__for__(auto layer __in__ layer_sets[_thread_number]) layer->node.fill(0.f); 
 
-		if(thread_number>=(int)layer_sets.size()) return NULL;
-		// add bias to outputs - just init with bias
-		__for__(auto layer __in__ layer_sets[thread_number]) layer->node.fill(0.f);
+		// first layer assumed input. copy input to it 
+		memcpy(layer_sets[_thread_number][0]->node.x, in, sizeof(float)*layer_sets[_thread_number][0]->node.size());
 
-		// first layer assumed input. copy it (but could just attach to save time)
-		memcpy(layer_sets[thread_number][0]->node.x, in, sizeof(float)*layer_sets[thread_number][0]->node.size());
-
-		__for__(auto layer __in__ layer_sets[thread_number])
+		// for all layers
+		__for__(auto layer __in__ layer_sets[_thread_number])
 		{
-			// add bias and activate these outputs (should all be summed up) from the last set of layers
-			// we activate before using the layer instead of after getting the signal to allow for more flexibility in the topology
+			// add bias and activate these outputs (they should all be summed up from other branches at this point)
 			layer->activate_nodes(); 
 
 			// send output signal downstream (note in this code 'top' is input layer, 'bottom' is output - bucking tradition
 			__for__ (auto &link __in__ layer->forward_linked_layers)
 			{
 				// instead of having a list of paired connections, just use the shape of W to determine connections
-				// this is harder to read, but requires less lookups
+				// this is harder to read, but requires less look-ups
 				// the 'link' variable is a std::pair created during the connect() call for the layers
 				int connection_index = link.first; 
 				base_layer *p_bottom = link.second;
-				// weighted distribution of the signal to layers under it
-				p_bottom->accumulate_signal(*layer, *W[connection_index],thread_number);
+				// weight distribution of the signal to layers under it
+				p_bottom->accumulate_signal(*layer, *W[connection_index], _train);
 			}
 
 		}
-		// return pointer to result from last layer
-		return layer_sets[thread_number][layer_sets[thread_number].size()-1]->node.x;
+		// return pointer to float * result from last layer
+		return layer_sets[_thread_number][layer_sets[_thread_number].size()-1]->node.x;
 	}
 
-	// write parameters to fie
+	// write parameters to stream/file
 	// note that this does not persist intermediate training information that could be needed to 'pickup where you left off'
-	// but you can still load and resume training
-	bool write(std::string filename, bool binary=false) { return write(std::ofstream(filename), binary); }
-	bool write(std::ofstream &ofs, bool binary=false) 
+	bool write(std::ofstream ofs, bool binary=false) 
 	{
 		// save layers
 		ofs<<(int)layer_sets[MAIN_LAYER_SET].size()<<std::endl;
@@ -542,9 +458,9 @@ public:
 		
 		return true;
 	}
+	bool write(std::string &filename, bool binary = false) { return write(std::ofstream(filename.c_str()), binary); }
 
-	// read network from a file
-	bool read(std::string filename) {	std::ifstream fs(filename); if(fs.is_open()) return read(std::ifstream(filename)); else return false;}
+	// read network from a file/stream
 	bool read(std::istream &ifs)
 	{
 		if(!ifs.good()) return false;
@@ -610,12 +526,114 @@ public:
 
 		return true;
 	}
+	bool read(std::string filename)
+	{
+		std::ifstream fs(filename.c_str(), std::ios::in | std::ios::binary);
+		if (fs.is_open())
+		{
+			bool ret = read(fs);
+			fs.close();
+			return ret;
+		}
+		else return false;
+	}
 
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE  // this is surely broke by now and will need to be fixed
 
+	// resets the state of all batches to 'free' state
+	void reset_mini_batch() { memset(batch_open.data(), BATCH_FREE, batch_open.size()); }
+	
+	// sets up number of mini batches (storage for sets of weight deltas)
+	void set_mini_batch_size(int batch_cnt)
+	{
+		if (batch_cnt<1) batch_cnt = 1;
+		_batch_size = batch_cnt;
+		dW_sets.resize(_batch_size);
+		dbias_sets.resize(_batch_size);
+		batch_open.resize(_batch_size); 
+		reset_mini_batch();
+	}
+	
+	int get_mini_batch_size() { return _batch_size; }
+
+	// return index of next free batch
+	// or returns -2 (BATCH_FILLED_COMPLETE) if no free batches - all complete (need a sync call)
+	// or returns -1 (BATCH_FILLED_IN_PROCESS) if no free batches - some still in progress (must wait to see if one frees)
+	int get_next_open_batch()
+	{
+		int reserved = 0;
+		int filled = 0;
+		for (int i = 0; i<batch_open.size(); i++)
+		{
+			if (batch_open[i] == BATCH_FREE) return i;
+			if (batch_open[i] == BATCH_RESERVED) reserved++;
+			if (batch_open[i] == BATCH_COMPLETE) filled++;
+		}
+		if (reserved>0) return BATCH_FILLED_IN_PROCESS; // all filled but wainting for reserves
+		if (filled == batch_open.size()) return BATCH_FILLED_COMPLETE; // all filled and complete
+		
+		bail("threading error"); // should not get here  unless threading problem
+	}
+
+	// apply all weights to first set of dW, then apply to model weights 
+	void sync_mini_batch()
+	{
+		// need to ensure no batches in progress (reserved)
+		int next = get_next_open_batch();
+		if (next == BATCH_FILLED_IN_PROCESS) bail("thread lock");
+
+		int layer_cnt = (int)layer_sets[MAIN_LAYER_SET].size();
+
+		base_layer *layer;
+
+		 // sum contributions 
+		for (int k = layer_cnt - 1; k >= 0; k--)
+		{
+			layer = layer_sets[MAIN_LAYER_SET][k];
+			__for__(auto &link __in__ layer->backward_linked_layers)
+			{
+				int w_index = (int)link.first;
+				// if batch free, then make sure it is zero'd out because we will increment dW set [0]
+				if (batch_open[0] == BATCH_FREE) dW_sets[0][w_index].fill(0);
+				for (int b = 1; b< _batch_size; b++)
+				{
+					if (batch_open[b] == BATCH_COMPLETE) dW_sets[0][w_index] += dW_sets[b][w_index];
+				}
+			}
+			if (dynamic_cast<convolution_layer*> (layer) != NULL)  continue;
+
+			// bias stuff... that needs to be fixed for conv layers perhaps
+			if (batch_open[0] == BATCH_FREE) dbias_sets[0][k].fill(0);
+			for (int b = 1; b< _batch_size; b++)
+			{
+				if (batch_open[b] == BATCH_COMPLETE) dbias_sets[0][k] += dbias_sets[b][k];
+			}
+		}
+
+		// update weights
+		for (int k = layer_cnt - 1; k >= 0; k--)
+		{
+			layer = layer_sets[MAIN_LAYER_SET][k];
+			__for__(auto &link __in__ layer->backward_linked_layers)
+			{
+				int w_index = (int)link.first;
+				if (dW_sets[0][w_index].size() > 0) _optimizer->increment_w(W[w_index], w_index, dW_sets[0][w_index]);  // -- 10%
+
+			}
+			if (dynamic_cast<convolution_layer*> (layer) != NULL)  continue;
+			for (int j = 0; j<layer->bias.size(); j++)
+				layer->bias.x[j] -= dbias_sets[0][k].x[j] * _optimizer->learning_rate;
+		}
+
+		// prepare to start mini batch over
+		reset_mini_batch();
+		train_updates++; // could have no updates .. so this is not exact
+		sync_layer_sets();
+	}
+
+	// reserve_next.. is used to reserve a space in the minibatch for the existing training sample
 	int reserve_next_batch()
 	{
-
 		lock_batch();
 		int my_batch_index = -3;
 		while (my_batch_index < 0)
@@ -638,126 +656,109 @@ public:
 			}
 			// need to wait for ones in progress to finish
 			unlock_batch();
-			sleep(1);
+			ucnn_sleep(1);
 			lock_batch();
 		}
 		return -3;
 	}
 
-	float get_learning_rate() {if(!_optimizer) throw; return _optimizer->learning_rate;}
-	void set_learning_rate(float alpha) {if(!_optimizer) throw; _optimizer->learning_rate=alpha;}
-	void reset() {if(!_optimizer) throw; _optimizer->reset();}
-	bool get_smart_train() {return _smart_train;}
-	void set_smart_train(bool _use_train) { _smart_train = _use_train;}
+	float get_learning_rate() {if(!_optimizer) bail("set optimizer"); return _optimizer->learning_rate;}
+	void set_learning_rate(float alpha) {if(!_optimizer) bail("set optimizer"); _optimizer->learning_rate=alpha;}
+	void reset_optimizer() {if(!_optimizer) bail("set optimizer"); _optimizer->reset();}
+	bool get_smart_training() {return _smart_train;}
+	void set_smart_training(bool _use_train) { _smart_train = _use_train;}
 	float get_smart_train_level() { return _skip_energy_level; }
 	void set_smart_train_level(float _level) { _skip_energy_level = _level; }
-	
+	void set_max_epochs(int max_e) { if (max_e <= 0) max_e = 1; max_epochs = max_e; }
+	int get_epoch() { return epoch_count; }
+
 	// goal here is to update the weights W. 
 	// use w_new = w_old - alpha dE/dw
 	// E = sum: 1/2*||y-target||^2
 	// note y = f(x*w)
 	// dE = (target-y)*dy/dw = (target-y)*df/dw = (target-y)*df/dx* dx/dw = (target-y) * df * y_prev  
+	// similarly for cross entropy
 
 // ===========================================================================
 // training part
 // ===========================================================================
 
+	// call before starting training for current epoch
 	void start_epoch(std::string loss_function="mse")
 	{
+		_cost_function=new_cost_function(loss_function);
 		train_correct = 0;
 		train_skipped = 0;
 		train_updates = 0;
 		train_samples = 0;
 		if (estimated_accuracy > 0 && _smart_train && old_estimated_accuracy>0)
 		{
-			if ((old_estimated_accuracy - estimated_accuracy) == 0)
+			if ((old_estimated_accuracy - estimated_accuracy) == 0) // accuracy doesn't change
 			{
-				heat_weights();
+				stuck_counter++;
+				if (stuck_counter > 4) // stuck for 4 epochs, heat up weights
+				{
+//					heat_weights();
+					set_learning_rate((0.95)*get_learning_rate());
+					if (get_learning_rate() < 0.000001f)
+					{
+						heat_weights();
+						set_learning_rate(0.000001f);
+					}
+	
+					stuck_counter = 0;
+				}
 			}
 		}
+		// accuracy not improving .. slow learning
+		if (best_accuracy_count > 1)
+		{
+			set_learning_rate((0.9f)*get_learning_rate());
+			if(get_learning_rate()<0.000001f) set_learning_rate(0.000001f);
+		}
+
 		old_estimated_accuracy = estimated_accuracy;
 		estimated_accuracy = 0;
 		//_skip_energy_level = 0.05;
 		_running_sum_E = 0;
 	}
 	
-	void end_epoch()
+	// time to stop?
+	bool elvis_left_the_building()
 	{
-		// run leftovers
+		if ((epoch_count>max_epochs) || (best_accuracy_count > 8)) return true;
+		else return false;
+	}
+
+	// call after putting all training samples through this epoch
+	bool end_epoch()
+	{
+		// run leftovers through mini-batch
 		sync_mini_batch();
 		epoch_count++;
 
-		estimated_accuracy = 100.f*train_correct / train_samples;
-		estimated_accuracy = (float)((int)(0.995f*estimated_accuracy * 10)) / 10.f; // reduce precision
+		// estimate accuracy of validation run 
+		estimated_accuracy = 0.995f*100.f*train_correct / train_samples;
 
+		if (train_correct > best_estimated_accuracy)
+		{
+			best_estimated_accuracy = (float)train_correct;
+			best_accuracy_count = 0;
+		}
+		else best_accuracy_count++;
+
+		return elvis_left_the_building();
 	}
 
-	bool train_class(float *in, int label_index, int _thread_number = -1)
+	void update_smart_train(const float E, bool correct)
 	{
-		if (_optimizer == NULL) throw;
-		//_optimizer->reset();
 
-		if (_thread_number < 0) _thread_number = get_thread_num();
-
-		if (_thread_number > _thread_count) throw;
-
-		const int thread_number = _thread_number;
-
-		// get next free mini_batch slot
-		// this is tied to the current state of the model
-		int my_batch_index = reserve_next_batch();
-		// out of data or an error if index is negative
-		if (my_batch_index < 0) return false;
-		// run through forward to get nodes activated
-		forward(in, thread_number);  //--- 10% of time
-
-		// set all deltas to zero
-		__for__(auto layer __in__ layer_sets[thread_number]) layer->delta.fill(0.f);
-
-		int layer_cnt = (int)layer_sets[thread_number].size();
-
-		// calc delta for last layer to prop back up through network
-		// d = (target-out)* grad_activiation(out)
-		base_layer *layer = layer_sets[thread_number][layer_cnt - 1];
-		float E = 0;
-		int max_j_out = 0;
-		int max_j_target = label_index;
-		
-		// was passing this in, but may as well just create it 
-		std::vector<float> target(layer->node.size(), -1);
-		if(label_index>=0 && label_index<layer->node.size()) target[label_index] = 1;
-
-		int layer_node_size = layer->node.size();
-		for (int j = 0; j < layer_node_size; j++)
-		{
-			//layer->delta.x[j] = cross_entropy::dE(layer->node.x[j], target[j]);
-			
-			layer->delta.x[j] = mse::dE(layer->node.x[j], target[j])*layer->df(layer->node.x, j, layer_node_size);;
-			float e = mse::E(layer->node.x[j], target[j]);
-
-			if (layer->node.x[max_j_out] < layer->node.x[j]) max_j_out = j;
-			// for better E maybe just look at 2 highest scores so zeros don't dominate 
-			E += e;
-		}
-
-		E /= (float)layer->node.size();
-		if (E != E)
-		{
-			std::cerr << "network blew up - try lowering learning rate" << std::endl;
-			throw;
-		}
-		
-		// to do: put data in separate objects for each thread to reduct critcal section
 #ifdef UCNN_OMP	
 #pragma omp critical
 #endif
 		{
 			train_samples++;
-
-			if (max_j_target == max_j_out)
-			{
-				train_correct++;
-			}
+			if (correct) train_correct++;
 
 			if (_smart_train)
 			{
@@ -768,48 +769,120 @@ public:
 				int s = (int)_running_E.size();
 				if (s >= SMART_TRAIN_SAMPLE_SIZE)
 				{
-
 					_running_sum_E /= (double)s;
 					std::sort(_running_E.begin(), _running_E.end());
 					float top_fraction = (float)_running_sum_E*10.f;
-					if (top_fraction > 0.75f) top_fraction = 0.75f;
-					if (top_fraction < 0.05f) top_fraction = 0.05f;
+					if (top_fraction > 0.8f) top_fraction = 0.8f;
+					if (top_fraction < 0.03f) top_fraction = 0.03f;
 					int index = s - 1 - (int)(top_fraction*(s - 1));
 
-					//std::cout << "e " << _running_E[s-1] << "," << _running_E[0] << std::endl;
-					if (_running_E[index] > 0)
-						_skip_energy_level = _running_E[index];
+					if (_running_E[index] > 0) _skip_energy_level = _running_E[index];
 
 					_running_E.clear();
-					//_running_sum_E = 0;
 				}
 			}
-			if (E>0 && E<_skip_energy_level)
-				train_skipped++;
+			if (E>0 && E<_skip_energy_level) train_skipped++;
 
 		}  // omp critical
 
 
+	}
 
+	// after starting epoch, call this to train against a class label
+	// label_index must be 0 to out_size()-1
+	// for thread safety, you must pass in the thread_index if calling from different threads
+	bool train_class(float *in, int label_index, int _thread_number = -1)
+	{
+		if (_optimizer == NULL) bail("set optimizer");
+		if (_thread_number < 0) _thread_number = get_thread_num();
+		if (_thread_number > _thread_count)  bail("call allow_threads()");
+
+		const int thread_number = _thread_number;
+
+		// get next free mini_batch slot
+		// this is tied to the current state of the model
+		int my_batch_index = reserve_next_batch();
+		// out of data or an error if index is negative
+		if (my_batch_index < 0) return false;
+		// run through forward to get nodes activated
+		forward(in, thread_number, 1);  
+
+		// set all deltas to zero
+		__for__(auto layer __in__ layer_sets[thread_number]) layer->delta.fill(0.f);
+
+		int layer_cnt = (int)layer_sets[thread_number].size();
+
+		// calc delta for last layer to prop back up through network
+		// d = (target-out)* grad_activiation(out)
+		const int last_layer_index = layer_cnt - 1;
+		base_layer *layer = layer_sets[thread_number][last_layer_index];
+		const int layer_node_size = layer->node.size();
+
+		if (dynamic_cast<dropout_layer*> (layer) != NULL) bail("can't have dropout on last layer");
+
+		float E = 0;
+		int max_j_out = 0;
+		int max_j_target = label_index;
+
+		// was passing this in, but may as well just create it on the fly
+		// a vector mapping the label index to the desired target output node values
+		// all -1 except target node 1
+		std::vector<float> target(layer_node_size, -1);
+		if(label_index>=0 && label_index<layer_node_size) target[label_index] = 1;
+
+
+		// because of numerator/demoninator cancellations which prevent a divide by zero issue, 
+		// we need to handle some things special on output layer
+		float cost_activation_type = 0;
+		if ((std::string("sigmoid").compare(layer->p_act->name) == 0) &&
+			(std::string("cross_entropy").compare(_cost_function->name) == 0)) 
+			cost_activation_type = 2;
+		else if ((std::string("tanh").compare(layer->p_act->name) == 0) &&
+			(std::string("cross_entropy").compare(_cost_function->name) == 0)) 
+			cost_activation_type = 1;
+	
+		for (int j = 0; j < layer_node_size; j++)
+		{
+			if(cost_activation_type>0)
+				layer->delta.x[j] = cost_activation_type*(layer->node.x[j]- target[j]);
+			else
+				layer->delta.x[j] = _cost_function->d_cost(layer->node.x[j], target[j])*layer->df(layer->node.x, j, layer_node_size);
+
+			if (layer->node.x[max_j_out] < layer->node.x[j]) max_j_out = j;
+			// for better E maybe just look at 2 highest scores so zeros don't dominate 
+
+			E += mse::cost(layer->node.x[j], target[j]);
+		}
+	
+		E /= (float)layer_node_size;
+		// check for NAN
+		if (E != E) bail("network blew up - try lowering learning rate\n");
+		
+		// critical section in here, blocking update
+		//bool match = false;
+		//if ((max_j_target == max_j_out)) match = true;
+		update_smart_train(E, (max_j_target == max_j_out));
 
 		if (E>0 && E<_skip_energy_level && _smart_train)
 		{
 			lock_batch();
 			batch_open[my_batch_index] = BATCH_FREE;
 			unlock_batch();
-			return false;
+			return false;  // return without doing training
 		}
 
 
 		// update hidden layers
 		// start at lower layer and push information up to previous layer
-		for(int k=layer_cnt-1; k>=0; k--)
+		// handle dropout first
+		
+		for(int k= last_layer_index; k>=0; k--)
 		{
 			layer = layer_sets[thread_number][k];
 			// all the signals should be summed up to this layer by now, so we go through and take the grad of activiation
 			int nodes=layer->node.size();
-			// already did last layer
-			if(k<layer_cnt - 1)
+			// already did last layer, so skip it
+			if( k< last_layer_index)
 				for (int i=0; i< nodes; i++) 
 					layer->delta.x[i] *= layer->df(layer->node.x, i, nodes);
 
@@ -818,7 +891,7 @@ public:
 			{
 				base_layer *p_top=link.second;
 				// note all the delta[connections[i].second] should have been calculated by time we get here
-				layer->distribute_delta(*p_top, *W[link.first],_thread_count);
+				layer->distribute_delta(*p_top, *W[link.first]);
 			}
 		}
 		
@@ -826,11 +899,10 @@ public:
 		// update weights - shouldn't matter the direction we update these 
 		// we can stay in backwards direction...
 		// it was not faster to combine distribute_delta and increment_w into the same loop
-		// matrix dw(1,1,1);
 		int size_W=(int)W.size();
 		dW_sets[my_batch_index].resize(size_W);
 		dbias_sets[my_batch_index].resize(layer_cnt);
-		for(int k=layer_cnt-1; k>=0; k--)	
+		for(int k= last_layer_index; k>=0; k--)
 		{
 			layer = layer_sets[thread_number][k];
 			
@@ -839,7 +911,7 @@ public:
 				base_layer *p_top =link.second;
 				int w_index = (int)link.first;
 				//if (dynamic_cast<max_pooling_layer*> (layer) != NULL)  continue;
-				layer->calculate_dw(*p_top, dW_sets[my_batch_index][w_index],_thread_count);// --- 20%
+				layer->calculate_dw(*p_top, dW_sets[my_batch_index][w_index]);// --- 20%
 				// moved this out to sync_mini_batch();
 				//_optimizer->increment_w( W[w_index],w_index, dW_sets[_batch_index][w_index]);  // -- 10%
 			}
@@ -848,7 +920,6 @@ public:
 			dbias_sets[my_batch_index][k] = layer->delta;
 		}
 		// if all batches finished, update weights
-
 		lock_batch();
 		batch_open[my_batch_index]=BATCH_COMPLETE;
 		int next_index=get_next_open_batch();

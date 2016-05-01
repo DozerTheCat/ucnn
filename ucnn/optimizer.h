@@ -29,8 +29,9 @@
 #include <algorithm>
 #include <string>
 #include <vector>
-#include "ucnn.h"
+#include <cstdlib>
 
+#include "core_math.h"
 
 // hack for VS2010 to handle c++11 for(:)
 #if (_MSC_VER  == 1600)
@@ -64,7 +65,8 @@ public:
 	virtual void push_back(int w, int h, int c){}	
 };
 
-#ifdef INCLUDE_TRAINING_CODE
+#ifndef NO_TRAINING_CODE
+
 
 class sgd: public optimizer
 {
@@ -87,16 +89,21 @@ public:
 	static const char *name(){return "adagrad";}
 
 	virtual ~adagrad(){__for__(auto g __in__ G1) delete g;}
-	virtual void push_back(int w, int h, int c){ G1.push_back(new matrix(w,h,c));}
+	virtual void push_back(int w, int h, int c) { G1.push_back(new matrix(w, h, c)); G1[G1.size() - 1]->fill(0); }
 	
 	virtual void reset() { __for__(auto g __in__ G1) g->fill(0.f);}
 	virtual void increment_w(matrix *w,  int g, const matrix &dW)
 	{
 		float *g1 = G1[g]->x;
+		//float min, max;
+		//G1[g]->min_max(&min, &max);
+		//std::cout << "((" << min << "," << max << ")";
 		const float eps = 1.e-8f;
+		// if (G1[g]->size() != w->size()) throw;
 		for(int s=0; s<w->size(); s++) 
 		{
 			g1[s] += dW.x[s] * dW.x[s];
+			//if (g1[s] < 1) throw;
 			w->x[s] -= learning_rate*dW.x[s]/(std::sqrt(g1[s]) + eps);
 		}	
 	};
@@ -110,7 +117,7 @@ public:
 	static const char *name(){return "rmsprop";}
 	virtual ~rmsprop(){__for__(auto g __in__ G1) delete g;}
 
-	virtual void push_back(int w, int h, int c){ G1.push_back(new matrix(w,h,c)); }
+	virtual void push_back(int w, int h, int c){ G1.push_back(new matrix(w,h,c)); G1[G1.size() - 1]->fill(0);}
 	virtual void reset() { __for__(auto g __in__ G1) g->fill(0.f);}
 	virtual void increment_w(matrix *w,  int g, const matrix &dW)
 	{
@@ -145,7 +152,8 @@ public:
 		__for__(auto g __in__ G2) g->fill(0.f);
 	}
 
-	virtual void push_back(int w, int h, int c){G1.push_back(new matrix(w,h,c)); G2.push_back(new matrix(w,h,c));}
+	virtual void push_back(int w, int h, int c){G1.push_back(new matrix(w,h,c)); G1[G1.size() - 1]->fill(0); G2.push_back(new matrix(w,h,c)); G2[G2.size() - 1]->fill(0);
+	}
 
 	virtual void increment_w(matrix *w,  int g, const matrix &dW)
 	{

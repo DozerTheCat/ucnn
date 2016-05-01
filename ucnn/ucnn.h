@@ -1,4 +1,4 @@
-// == uCNN ====================================================================
+﻿// == uCNN ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -23,8 +23,8 @@
 //
 // ==================================================================== uCNN ==
 #pragma once
+#define UCNN_SSE3
 
-//#define USE_OMP
 //#define USE_AF
 //#define USE_CUDA
 
@@ -52,10 +52,20 @@
 
 namespace ucnn
 {
+	void replaceAll(std::string& str, const std::string& from, const std::string& to) {
+		if (from.empty())
+			return;
+		size_t start_pos = 0;
+		while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
+			str.replace(start_pos, from.length(), to);
+			start_pos += to.length(); // In case 'to' contains 'from', like replacing 'x' with 'yx'
+		}
+	}
 
 // class to handle timing and drawing text progress output
 class progress
 {
+
 public:
 	progress(int size=-1, const char *label=NULL ) {reset(size, label);}
 
@@ -105,7 +115,11 @@ public:
 			int hours = (int)(minutes / 60);
 			seconds = seconds - minutes * 60;
 			minutes = minutes - hours * 60;
-			elapsed = " " + std::to_string((long long)hours) + ":" + std::to_string((long long)minutes) + ":" + std::to_string((long long)seconds);
+			std::string min_string = std::to_string((long long)minutes);
+			if (min_string.length() < 2) min_string = "0" + min_string;
+			std::string sec_string = std::to_string((long long)seconds);
+			if (sec_string.length() < 2) sec_string = "0" + sec_string;
+			elapsed = " " + std::to_string((long long)hours) + ":" + min_string + ":" + sec_string;
 			L-= (int)elapsed.length();
 		}
 		for (int i = 0; i<L; i++) header += "=";
@@ -116,7 +130,64 @@ public:
 	}
 };
 
-// just to make the output easier to read
+class html_log
+{
+	struct log_stuff
+	{
+		std::string str;
+		float test_accurracy;
+		float train_accurracy_est;
+	};
+	std::vector <log_stuff> log;
+	std::string header;
+	std::string notes;
+public:
+	html_log() {};
 
+	void add_header(std::string tab_header) { header=tab_header;}
+	void add_row(float train_acccuracy, float test_accuracy, std::string tab_row)
+	{
+		log_stuff s;
+		s.str = tab_row; s.test_accurracy = test_accuracy; s.train_accurracy_est = train_acccuracy;
+		log.push_back(s);
+	}
+	void add_note(std::string msg) {notes = msg;}
+	bool write(std::string filename) {
+
+		std::string top = "<!DOCTYPE html><html><head><meta http-equiv=\"content - type\" content=\"text/html; charset = UTF - 8\"><style>table, th, td{border: 1px solid black; border - collapse: collapse; } th, td{ padding: 5px;}</style><meta name=\"robots\" content=\"noindex, nofollow\"><meta name=\"googlebot\" content=\"noindex, nofollow\"><meta http-equiv=\"refresh\" content=\"30\"/><script type=\"text/javascript\" src=\"/js/lib/dummy.js\"></script><link rel=\"stylesheet\" type=\"text/css\" href=\"/css/result-light.css\"><style type=\"text/css\"></style><title>Micro CNN Training Report</title></head><body><script type=\"text/javascript\" src=\"https://www.gstatic.com/charts/loader.js\"></script>Training Summary <script type=\"text/javascript\">document.write(Date());</script>:<div id = \"chart_div\"></div><script type = 'text/javascript'>//<![CDATA[\n";
+		top += "google.charts.load('current', { packages: ['corechart', 'line'] });\ngoogle.charts.setOnLoadCallback(drawLineColors);\nfunction drawLineColors() {";
+		top += "\nvar data = new google.visualization.DataTable();data.addColumn('number', 'Epoch');data.addColumn('number', 'Training Estimate');data.addColumn('number', 'Validation Testing');data.addRows([";
+		std::string data = "";
+		float min = 100;
+		for (int i = 0; i < log.size(); i++)
+		{
+			if ((100. - log[i].train_accurracy_est) < min) min = (100. - log[i].train_accurracy_est);
+			if ((100. - log[i].test_accurracy) < min) min = (100. - log[i].test_accurracy);
+			data += "[" + int2str(i) + "," + float2str(100. - log[i].train_accurracy_est) + "," + float2str(100. - log[i].test_accurracy) + "],";
+		}
+		float min_10 = min;
+//		while (min_10 > min) min_10 /= 10.f;
+
+		std::string mid = "]);var options = { 'height':400, hAxis: {title: 'Epoch', logScale: true},vAxis : {title: 'Error (%)', logScale: true, viewWindow: {min:"+float2str(min_10)+",max: 100},ticks: [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1,2, 5, 10, 20, 50, 100] },colors : ['#313055','#F52B00'] };var chart = new google.visualization.LineChart(document.getElementById('chart_div')); chart.draw(data, options);}//]]>\n </script>";
+
+		std::string msg = "<table style='width:100 %'>";
+		int N = (int)log.size();
+		msg += "<tr><td>" + header + "</td></tr>";
+		for (int i = N - 1; i >=0; i--)
+			msg += "<tr><td>" + log[i].str + "</td></tr>";
+
+		replaceAll(msg, "\t", "</td><td>");
+		replaceAll(notes, "\n", "<br>");
+
+		std::string bottom = "</tr></table><br>"+notes+"</body></html>";
+
+		std::ofstream f(filename.c_str());
+		f << top; f << data; f << mid; f << msg; f << bottom;
+
+		f.close();
+		return true;
+	}
+
+};
 
 }// namespace

@@ -55,33 +55,33 @@ namespace elu
 
 namespace identity 
 {
-	inline float  f(float *in, int i, int size, float bias) {  return bias+in[i]; }
-	inline float  df(float *in, int i, int size){return 1.f;};
+	inline float  f(float *in, int i, const int size, const float bias) {  return bias+in[i]; }
+	inline float  df(float *in, int i, const int size){return 1.f;};
 	const char name[]="identity";
 }
 namespace relu 
 {
-	inline float  f(float *in, int i, int size, float bias) {  if(in[i]+bias < 0) return 0; return in[i]+bias; }
-	inline float  df(float *in, int i, int size) {if(in[i] > 0) return 1.0f; else return 0.0f; }
+	inline float  f(float *in, int i, const int size, const float bias) {  if(in[i]+bias < 0) return 0; return in[i]+bias; }
+	inline float  df(float *in, int i, const int size) {if(in[i] > 0) return 1.0f; else return 0.0f; }
 	const char name[]="relu";
 };
 namespace lrelu 
 {
-	inline float  f(float *in, int i, int size, float bias) {  if(in[i]+bias < 0) return 0.01f*(in[i]+bias); return in[i]+bias; }
-	inline float  df(float *in, int i, int size) {if(in[i] > 0) return 1.0f; else return 0.01f; }
+	inline float  f(float *in, int i, const int size, const float bias) {  if(in[i]+bias < 0) return 0.01f*(in[i]+bias); return in[i]+bias; }
+	inline float  df(float *in, int i, const int size) {if(in[i] > 0) return 1.0f; else return 0.01f; }
 	const char name[]="lrelu";
 };
 namespace vlrelu 
 {
-	inline float  f(float *in, int i, int size, float bias) {  if(in[i]+bias < 0) return 0.33f*(in[i]+bias); return in[i]+bias; }
-	inline float  df(float *in, int i, int size) {if(in[i] > 0) return 1.0f; else return 0.33f; }
+	inline float  f(float *in, int i, const int size, const float bias) {  if(in[i]+bias < 0) return 0.33f*(in[i]+bias); return in[i]+bias; }
+	inline float  df(float *in, int i, const int size) {if(in[i] > 0) return 1.0f; else return 0.33f; }
 	const char name[]="vlrelu";
 };
 
 namespace sigmoid
 {
-	inline float  f(float *in, int i, int size, float bias) { return in[i] =(1.0f/(1.0f+exp(-(in[i]+bias))));}
-	inline float df(float *in, int i, int size) {return in[i]*(1.f-in[i]); }
+	inline float  f(float *in, int i, const int size, const float bias) { return in[i] =(1.0f/(1.0f+exp(-(in[i]+bias))));}
+	inline float df(float *in, int i, const int size) {return in[i]*(1.f-in[i]); }
 	const char name[]="sigmoid";
 };
 
@@ -124,8 +124,8 @@ namespace none
 typedef struct 
 {
 public:
-	float (*f)(float *, int, int, float);
-	float (*df)(float *, int, int);
+	float (*f)(float *, int, const int, const float);
+	float (*df)(float *, int, const int);
 	const char *name;
 } activation_function;
 

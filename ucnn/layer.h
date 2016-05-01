@@ -57,10 +57,10 @@ public:
 	matrix delta;
 	std::vector<std::pair<int,base_layer*>> backward_linked_layers;
 
-	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1) =0;
-	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int threads=1)=0;
+	virtual void distribute_delta(base_layer &top, const matrix &w, const int train = 1) =0;
+	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int train =1)=0;
 #endif
-	virtual void accumulate_signal(const base_layer &top_node, const matrix &w, const int threads=1) =0;
+	virtual void accumulate_signal(const base_layer &top_node, const matrix &w, const int train =0) =0;
 
 	base_layer(const char* layer_name, int _w, int _h=1, int _c=1) : node(_w, _h, _c), bias(_w, _h, _c), p_act(NULL), name(layer_name), pad_cols(0), pad_rows(0)
 		#ifndef NO_TRAINING_CODE
@@ -109,9 +109,9 @@ public:
 	input_layer(const char *layer_name, int _w, int _h=1, int _c=1) : base_layer(layer_name,_w,_h,_c) {p_act=new_activation_function("identity"); }
 	virtual  ~input_layer(){}
 	virtual void activate_nodes() {}
-	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1) {}
-	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int threads=1) {}
-	virtual void accumulate_signal(const base_layer &top_node, const matrix &w, const int threads=1) {}
+	virtual void distribute_delta(base_layer &top, const matrix &w, const int train =1) {}
+	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int train =1) {}
+	virtual void accumulate_signal(const base_layer &top_node, const matrix &w, const int train =0) {}
 	virtual std::string get_config_string() {std::string str="input "+int2str(node.cols)+" "+int2str(node.rows)+" "+int2str(node.chans)+ " "+p_act->name+"\n"; return str;}
 };
 
@@ -124,16 +124,19 @@ class fully_connected_layer : public base_layer
 public:
 	fully_connected_layer(const char *layer_name, int _size, activation_function *p ) : base_layer(layer_name,_size,1,1)  {p_act=p; }//layer_type=fully_connected_type;}
 	virtual std::string get_config_string() {std::string str="fully_connected "+int2str(node.size())+ " "+p_act->name+"\n"; return str;}
-	virtual void accumulate_signal( const base_layer &top,const matrix &w, const int threads=1) 
+	virtual void accumulate_signal( const base_layer &top,const matrix &w, const int train =0)
 	{
 		// doesn't care if shape is not 1D
 		// here weights are formated in matrix, top node in cols, bottom node along rows. (note that my top is opposite of traditional understanding)
-			node += top.node.dot_1dx2d(w);
-		//for(int j=0; j<node.size(); j++)	node.x[j]+=dot(top.node.x ,&node.x[j*node.cols],top.node.size());
+		node += top.node.dot_1dx2d(w);
+//		const int s = w.rows;
+//		const int ts = top.node.size();
+//		for (int j = 0; j<s; j++)	
+//			node.x[j] += dot(top.node.x, w.x+j*w.cols, ts);
 
 	}
 #ifndef NO_TRAINING_CODE
-	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1) 
+	virtual void distribute_delta(base_layer &top, const matrix &w, const int train =1)
 	{
 		const int w_cols = w.cols;
 		for (int b = 0; b < delta.size(); b++)
@@ -143,7 +146,7 @@ public:
 		}
 	}
 
-	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int threads = 1)
+	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int train = 1)
 	{
 		const float *bottom = delta.x; const int sizeb = delta.size();
 		const float *top = top_layer.node.x; const int sizet = top_layer.node.size();
@@ -191,7 +194,7 @@ public:
 	}
 
 	// no weights 
-	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int threads=1) {}
+	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int train =1) {}
 	virtual matrix * new_connection(base_layer &top, int weight_mat_index)
 	{
 		// wasteful to add weight matrix (1x1x1), but makes other parts of code more OO
@@ -215,7 +218,7 @@ public:
 	}
 
 	// this is downsampling
-	virtual void accumulate_signal(const base_layer &top,const matrix &w,const int threads=1)
+	virtual void accumulate_signal(const base_layer &top,const matrix &w,const int train =0)
 	{
 		int kstep=top.node.cols*top.node.rows;
 		int jstep=top.node.cols;
@@ -310,7 +313,7 @@ public:
 #ifndef NO_TRAINING_CODE
 
 	// this is upsampling
-	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1)
+	virtual void distribute_delta(base_layer &top, const matrix &w, const int train =1)
 	{
 		int *p_map = _max_map.data();
 		for(int k=0; k<(int)_max_map.size(); k++) 
@@ -318,6 +321,90 @@ public:
 	}
 #endif
 };
+
+//----------------------------------------------------------------------------------------------------------
+// D R O P   O U T
+// 
+// dropout applies to the previous layer, so dropout can be you last layer
+class dropout_layer : public base_layer
+{
+	float _dropout_rate;
+	matrix drop_mask;
+public:
+	dropout_layer(const char *layer_name, float dropout_rate, activation_function *p = NULL) : base_layer(layer_name, 1)
+	{
+		_dropout_rate = dropout_rate;
+		p_act = p; p_act = new_activation_function("identity");
+	}
+	virtual  ~dropout_layer() {}
+	virtual std::string get_config_string() { std::string str = "dropout " + float2str(_dropout_rate)+"\n"; return str; }
+	virtual void resize(int _w, int _h = 1, int _c = 1)
+	{
+		if (_w<1) _w = 1; if (_h<1) _h = 1; if (_c<1) _c = 1;
+		drop_mask.resize(_w, _h, _c);
+		base_layer::resize(_w, _h, _c);
+	}
+
+	virtual void activate_nodes() { return; }
+	// no weights 
+	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int train = 1) {}
+	virtual matrix * new_connection(base_layer &top, int weight_mat_index)
+	{
+		// wasteful to add weight matrix (1x1x1), but makes other parts of code more OO
+		// bad will happen if try to put more than one pool layer
+		top.forward_linked_layers.push_back(std::make_pair(weight_mat_index, this));
+		int pool_size = 1;
+		int w = (top.node.cols) / 1;
+		int h = (top.node.rows) / 1;
+		resize(w, h, top.node.chans);
+#ifndef NO_TRAINING_CODE
+		backward_linked_layers.push_back(std::make_pair(weight_mat_index, &top));
+#endif
+		return new matrix(1, 1, 1);
+	}
+
+	// for dropout...
+	// we know this is called first in the backward pass, and the train will be set to 1
+	// when that happens the dropouts will be set. 
+	// different dropouts for each mininbatch... don't know if that matters...
+	virtual void accumulate_signal(const base_layer &top, const matrix &w, const int train = 0)
+	{
+		const float *top_node = top.node.x;
+		const int size = top.node.chans*top.node.rows*top.node.cols;
+
+		if (train)
+		{
+			for (int k = 0; k < size; k++)
+			{
+				int r = rand() % 100;
+				if (r <= (_dropout_rate*10.f))
+					drop_mask.x[k] = 0.5;
+				else
+					drop_mask.x[k] = 1.0;
+				node.x[k] = top_node[k] * drop_mask.x[k];
+				//		p_map[output_index] = max_i;
+				//output_index++;
+			}
+		}
+		else
+		{
+			for (int k = 0; k < size; k++)
+				node.x[k] = top_node[k];
+		}
+	}
+#ifndef NO_TRAINING_CODE
+
+	virtual void distribute_delta(base_layer &top, const matrix &w, const int train = 1)
+	{
+		for (int k = 0; k<top.node.chans*top.node.rows*top.node.cols; k++)
+		{
+			if(drop_mask.x[k]==1)
+				top.delta.x[k] = delta.x[k];
+		}
+	}
+#endif
+};
+
 
 //----------------------------------------------------------------------------------------------------------
 // F R A C T I O N A L    M A X   P O O L I N G   
@@ -348,7 +435,7 @@ public:
 	}
 
 	// no weights 
-	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int threads=1) {}
+	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int train =1) {}
 	virtual matrix * new_connection(base_layer &top, int weight_mat_index)
 	{
 			// wasteful to add weight matrix (1x1x1), but makes other parts of code more OO
@@ -366,7 +453,7 @@ public:
 	}
 
 	// this is downsampling
-	virtual void accumulate_signal(const base_layer &top,const matrix &w,const int threads=1)
+	virtual void accumulate_signal(const base_layer &top,const matrix &w,const int train =0)
 	{
 		const int top_node_size=top.node.cols*top.node.rows;
 		const int top_node_len=top.node.cols;
@@ -488,7 +575,7 @@ public:
 #ifndef NO_TRAINING_CODE
 
 	// this is upsampling
-	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1)
+	virtual void distribute_delta(base_layer &top, const matrix &w, const int train =1)
 	{
 		int *p_map = _max_map.data();
 		for(unsigned int k=0; k<_max_map.size(); k++) 
@@ -511,15 +598,34 @@ public:
 	//int maps_per_kernel;
 	int kernels_per_map;
 
+
+	void *filter_mem;
+	void *img_mem;
+	void *imgout_mem;
+	void *img_mem2;
+	void *imgout_mem2;
+
+
 	convolution_layer(const char *layer_name, int _w, int _h, int _c, activation_function *p ) : base_layer(layer_name, _w, _h, _c) 
 	{
 		p_act=p; _stride =1; kernel_rows=_h; kernel_cols=_w; maps=_c;kernels_per_map=0; pad_cols = kernel_cols-1; pad_rows = kernel_rows-1;
+		filter_mem = NULL;
+		img_mem = NULL;
+		imgout_mem = NULL;
+		img_mem2 = NULL;
+		imgout_mem2 = NULL;
 	}
-	virtual  ~convolution_layer(){}
-
+	virtual  ~convolution_layer() {
+		if (filter_mem) free(filter_mem);
+		if (img_mem) free(img_mem);
+		if (imgout_mem) free(imgout_mem);
+		if (img_mem2) free(img_mem2);
+		if (imgout_mem2) free(imgout_mem2);
+	}
 	virtual std::string get_config_string() {std::string str="convolution "+int2str(kernel_cols)+" "+int2str(kernel_rows)+" "+int2str(maps)+" "+p_act->name+"\n"; return str;}
 	
-	virtual int fan_size() {return kernel_rows*kernel_cols*maps*kernels_per_map;}
+	virtual int fan_size() { return kernel_rows*kernel_cols*maps *kernels_per_map; }
+
 	
 	virtual void resize(int _w, int _h=1, int _c=1) // special resize nodes because bias handled differently with shared wts
 	{
@@ -550,18 +656,18 @@ public:
 	virtual void activate_nodes()
 	{ 
 		//int total_maps=kernels;
-		int map_size = node.rows*node.cols;
-
-		for (int c=0; c<maps; c++) 
+		const int map_size = node.rows*node.cols;
+		const int _maps = maps;
+		for (int c=0; c<_maps; c++) 
 		{
-			float b = bias.x[c];
+			const float b = bias.x[c];
 			float *x= &node.x[c*map_size];
 
 			for (int i=0; i<map_size; i++) x[i]=p_act->f(x,i,map_size,b);
 		}
 	}
 
-	virtual void accumulate_signal( const base_layer &top, const matrix &w, const int threads=1) 
+	virtual void accumulate_signal( const base_layer &top, const matrix &w, const int train =0)
 	{	
 		const int kstep=top.node.cols*top.node.rows;
 		const int jstep=top.node.cols;
@@ -570,82 +676,67 @@ public:
 		const int kernel_map_step = kernel_size*kernels_per_map;
 		const int map_size=node.cols*node.rows;
 		const float *_w = w.x;
-		const float *_top_node;
 		const int top_chans = top.node.chans;
 		const int map_cnt=maps;
 		const int w_size = kernel_cols;
-		const int stride = _stride;
-		//const int node_size =top.node.rows-kernel_rows;
-			
-		//const int top_delta_size = top.delta.rows;
-		
+		const int stride = _stride;		
 		const int node_size= node.cols;
+		const int outsize = node_size*node_size;
 
 		if(kernel_rows==5)
 		{
-	
-	/*
-			af::array af_top(top.node.cols, top.node.rows, top.node.chans, top.node.x, afHost);
-			af::array af_top_unwrap=af::unwrap(af_top,5,5,1,1);
-			af::array af_w(w.cols*w.rows, kernels_per_map*maps, w.x, afHost);
-//			std::cout << w.cols*w.rows << " | " << af_w.slice(0).dims().dims[0] << " | " << af_w.slice(0).dims().dims[1] << " | " << af_w.slice(0).dims().dims[2] << "\n";
-//			std::cout <<"unwrap" << " | " << af_top_unwrap.dims().dims[0] << " | " << af_top_unwrap.dims().dims[1] << "|" << af_top_unwrap.dims().dims[2] << "\n";
-			//af_print(af_top_unwrap.col(0));
-		//	af_print(af_w.col(0));
-
-			float img[] =  {1,0,2,1,0,1,0,2,1,0,1,0,2,1,0,1,0,2,1,0,1,0,2,1,0,};
-
-
-        // setup image and device copies of kernels
-        af::array af_img(25,img,afHost);
-		//af::array u_img = af::unwrap(af_img,3,3,1,1);
-        //af::array af_kern(9,kern,afHost);
-			for(int k=0; k<top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
+			// orig implementation
+#ifndef UCNN_SSE3
+			for (int k = 0; k<top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
 			{
-				for(int map=0; map<map_cnt; map++) // how many maps  maps= node.chans
+				const float *_top_node;
+				_top_node = &top.node.x[k*kstep];
+				for (int map = 0; map<map_cnt; map++) // how many maps  maps= node.chans
 				{
-					out = dot( af_w.col(map+k*map), af_img);
-				//	af::array af_res=af::dot(af_top_unwrap,af_w.slice(map+k*maps)); // one map
-				}
-			}
-*/
-			//af_w =af::moddims(w.cols*w.rows,1,kernels_per_map*maps);
-			/* 
-			top was [top_chan0] [top_chan1] [top_chan2] []
-			w is [map0 top_chan0] [map1 top_chan0] [map2]..[maps] [map0 top_chan1] [map1 top_chan1]... 
-			r[0] = w[0,0] * top[0] + w[0,1] * top[1] + 
-			r[1] = w[1,0] * top[0] + w[1,1] * top[1] + 
-			bottom is [r0] [r1] ..
-
-			top_unwrap [(cols-w.cols+1)*w.rows by () ]
-			each row is a single w * top window
-			top_un dot w[slice=map] -> reshape result
-
-			*/
-			for(int k=0; k<top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
-			{
-				_top_node= &top.node.x[k*kstep];
-				for(int map=0; map<map_cnt; map++) // how many maps  maps= node.chans
-				{
-					_w=&w.x[(map+k*maps)*kernel_size];
-
-					for(int j=0; j<node_size; j+= stride)//stride) // input h 
+					_w = &w.x[(map + k*maps)*kernel_size];
+					for (int j = 0; j < node_size; j += stride)//stride) // input h 
 					{
-						for(int i=0; i<node_size; i+= stride)//stride) // intput w
+						for (int i = 0; i < node_size; i += stride)//stride) // intput w
 						{
 							//float v=0;
-							const float v=unwrap_2d_dot_5x5(_top_node+i+j*jstep,_w,	jstep,w_size);
-							node.x[i+(j)*node_size +map_size*map]+= v;
+							const float v = unwrap_2d_dot_5x5(_top_node + i + j*jstep, _w, jstep, w_size);
+							node.x[i + (j)*node_size + map_size*map] += v;
 						}
 					}
-
 				}
 			}
+			return; 
+#else // UCNN_SSE3
+			// ensures 16byte alignment, but maybe not needed if x64
+			if(!filter_mem) filter_mem = malloc(28 * sizeof(float) + 15);
+			float *filter_ptr = (float *)(((uintptr_t)filter_mem + 15) & ~(uintptr_t)0x0F);
+			if(!img_mem) img_mem = malloc(28 * node_size*node_size * sizeof(float) + 15);
+			float *img_ptr = (float *)(((uintptr_t)img_mem + 15) & ~(uintptr_t)0x0F);
+			if(!imgout_mem) imgout_mem = malloc(node_size*node_size * sizeof(float) + 15);
+			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem + 15) & ~(uintptr_t)0x0F);
+
+			for (int k = 0; k < top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
+			{				
+				unwrap_5x5(img_ptr, &top.node.x[k*kstep], jstep);
+
+				for (int map = 0; map < map_cnt; map++) // how many maps  maps= node.chans
+				{
+					memcpy(filter_ptr, &w.x[(map + k*maps)*kernel_size], 25 * sizeof(float));
+					//dot_unwrapped_sse(img_ptr, filter_ptr, imgout_ptr, outsize,28);
+					dot_unwrapped_5x5_sse(img_ptr, filter_ptr, imgout_ptr, outsize);
+
+					float *out = node.x + map_size*map;
+					for (int j = 0; j < outsize; j++) out[j] += imgout_ptr[j];
+				}
+			}
+#endif // UCNN_SSE3
 		}
 		else if(kernel_rows==3)
 		{
+#ifndef UCNN_SSE3
 			for(int k=0; k<top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
 			{
+				const float *_top_node;
 				_top_node= &top.node.x[k*kstep];
 				for(int map=0; map<map_cnt; map++) // how many maps  maps= node.chans
 				{
@@ -654,12 +745,33 @@ public:
 						for(int i=0; i<node_size; i+= stride)//stride) // intput w
 						{
 							//float v=0;
-							const float v=unwrap_2d_dot_3x3(
-								_top_node+i+j*jstep,_w,	jstep,w_size);
+							const float v=unwrap_2d_dot_3x3(_top_node+i+j*jstep,_w,	jstep,w_size);
 							node.x[i+(j)*node_size +map_size*map]+= v;
 						}
 				}
 			}
+#else // UCNN_SSE3
+			if (!filter_mem) filter_mem = malloc(12 * sizeof(float) + 15);
+			float *filter_ptr = (float *)(((uintptr_t)filter_mem + 15) & ~(uintptr_t)0x0F);
+			if (!img_mem) img_mem = malloc(12 * node_size*node_size * sizeof(float) + 15);
+			float *img_ptr = (float *)(((uintptr_t)img_mem + 15) & ~(uintptr_t)0x0F);
+			if (!imgout_mem) imgout_mem = malloc(node_size*node_size * sizeof(float) + 15);
+			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem + 15) & ~(uintptr_t)0x0F);
+
+			for (int k = 0; k < top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
+			{
+				unwrap_3x3(img_ptr, &top.node.x[k*kstep], jstep);
+				for (int map = 0; map < map_cnt; map++) // how many maps  maps= node.chans
+				{
+					memcpy(filter_ptr, &w.x[(map + k*maps)*kernel_size], 9 * sizeof(float));
+
+					dot_unwrapped_3x3_sse(img_ptr, filter_ptr, imgout_ptr, outsize);
+
+					float *out = node.x + map_size*map;
+					for (int j = 0; j < outsize; j++) out[j] += imgout_ptr[j];
+				}
+			}
+#endif //UCNN_SSE3
 		}
 		else
 		{
@@ -689,7 +801,7 @@ public:
 #ifndef NO_TRAINING_CODE
 
 	// convolution::distribute_delta
-	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1) 
+	virtual void distribute_delta(base_layer &top, const matrix &w, const int train=1)
 	{
 		
 		// here to calculate top_delta += bottom_delta * W
@@ -703,7 +815,6 @@ public:
 		const int kernel_map_step = kernel_size*kernels_per_map;
 		const int map_size=delta_pad.cols*delta_pad.rows;
 			const float *_w = w.x;
-			const float *_delta;
 			const int w_size = kernel_cols;
 			const int delta_size = delta_pad.cols;
 			const int map_cnt=maps;
@@ -712,12 +823,14 @@ public:
 
 		if(kernel_cols==5)
 		{					
+#ifndef UCNN_SSE3
 			for(int k=0; k<top_delta_chans; k++) // input channels --- same as kernels_per_map - kern for each input
 			{
 				_w=& w.x[k*maps*kernel_size];
 				//continue;
 				for(int map=0; map<map_cnt; map++) // how many maps  maps= node.chans
 				{
+					const float *_delta;
 					_delta = &delta_pad.x[map*map_size];
 					//_delta = &delta_pad.x[map*map_size];
 					for(int j=0; j<top_delta_size; j+=1)// was stride) // input h 
@@ -733,9 +846,39 @@ public:
 					_w+=kernel_size;
 				}
 			}
+#else// UCNN_SSE3
+			if (!filter_mem) filter_mem = malloc(28 * sizeof(float) + 15);
+			float *filter_ptr = (float *)(((uintptr_t)filter_mem + 15) & ~(uintptr_t)0x0F);
+			if (!img_mem2) img_mem2 = malloc(28 * delta_size*delta_size * sizeof(float) + 15);
+			float *img_ptr = (float *)(((uintptr_t)img_mem2 + 15) & ~(uintptr_t)0x0F);
+			if (!imgout_mem2) imgout_mem2 = malloc(delta_size*delta_size * sizeof(float) + 15);
+			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem2 + 15) & ~(uintptr_t)0x0F);
+
+			for (int map = 0; map<map_cnt; map++) // how many maps  maps= node.chans
+			{
+				unwrap_5x5(img_ptr, &delta_pad.x[map*map_size], delta_size);
+
+				const int outsize = top_delta_size*top_delta_size;
+				for (int k = 0; k<top_delta_chans; k++) // input channels --- same as kernels_per_map - kern for each input
+				{
+					_w = &w.x[(k*maps + map)*kernel_size];
+					// flip, flip to make 180 version
+					for (int ii = 0; ii < 25; ii++) filter_ptr[ii] = _w[24 - ii];
+
+					dot_unwrapped_5x5_sse(img_ptr, filter_ptr, imgout_ptr, outsize);
+
+					float *out = &top.delta.x[k*kstep];
+					for (int j = 0; j < outsize; j++) out[j] += imgout_ptr[j];
+
+				} // for map
+			}
+
+#endif // #ifndef UCNN_SSE3
+
 		}
 		else if(kernel_cols==3)					
 		{
+#ifndef UCNN_SSE3
 
 			for(int k=0; k<top_delta_chans; k++) // input channels --- same as kernels_per_map - kern for each input
 			{
@@ -743,6 +886,7 @@ public:
 				//continue;
 				for(int map=0; map<map_cnt; map++) // how many maps  maps= node.chans
 				{
+					const float *_delta;
 					_delta = &delta_pad.x[map*map_size];
 					//_delta = &delta_pad.x[map*map_size];
 					for(int j=0; j<top_delta_size; j+=1)// was stride) // input h 
@@ -759,6 +903,33 @@ public:
 					_w+=kernel_size;
 				}
 			}
+#else// UCNN_SSE3
+			if (!filter_mem) filter_mem = malloc(12 * sizeof(float) + 15);
+			float *filter_ptr = (float *)(((uintptr_t)filter_mem + 15) & ~(uintptr_t)0x0F);
+			if (!img_mem2) img_mem2 = malloc(12 * delta_size*delta_size * sizeof(float) + 15);
+			float *img_ptr = (float *)(((uintptr_t)img_mem2 + 15) & ~(uintptr_t)0x0F);
+			if (!imgout_mem2) imgout_mem2 = malloc(delta_size*delta_size * sizeof(float) + 15);
+			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem2 + 15) & ~(uintptr_t)0x0F);
+
+			for (int map = 0; map<map_cnt; map++) // how many maps  maps= node.chans
+			{
+				unwrap_3x3(img_ptr, &delta_pad.x[map*map_size], delta_size);
+
+				const int outsize = top_delta_size*top_delta_size;
+				for (int k = 0; k<top_delta_chans; k++) // input channels --- same as kernels_per_map - kern for each input
+				{
+					_w = &w.x[(k*maps + map)*kernel_size];
+					for (int ii = 0; ii < 9; ii++) filter_ptr[ii] = _w[12 - ii];
+
+					dot_unwrapped_3x3_sse(img_ptr, filter_ptr, imgout_ptr, outsize);
+
+					float *out = &top.delta.x[k*kstep];
+					for (int j = 0; j < outsize; j++) out[j] += imgout_ptr[j];
+
+				} // for map
+			}
+
+#endif // #ifndef UCNN_SSE3
 		}
 		else
 		{
@@ -790,7 +961,7 @@ public:
 
 
 	// convolution::calculate_dw
-	virtual void calculate_dw(const base_layer &top, matrix &dw, const int threads=1)
+	virtual void calculate_dw(const base_layer &top, matrix &dw, const int train =1)
 	{
 		int kstep=top.delta.cols*top.delta.rows;
 		int jstep=top.delta.cols;
@@ -910,9 +1081,9 @@ class concatination_layer : public base_layer
 public:
 	concatination_layer(const char *layer_name, int _w, int _h ) : base_layer(layer_name, _w,_h,1) { }
 	virtual  ~concatination_layer(){}
-	virtual void distribute_delta(base_layer &top, const matrix &w, const int threads=1) {}
-	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int threads=1) {}
-	virtual void accumulate_signal(const base_layer &top_node, const matrix &w, const int threads=1) {}
+	virtual void distribute_delta(base_layer &top, const matrix &w, const int train =1) {}
+	virtual void calculate_dw(const base_layer &top_layer, matrix &dw, const int train =1) {}
+	virtual void accumulate_signal(const base_layer &top_node, const matrix &w, const int train =0) {}
 
 	virtual std::string get_config_string() {std::string str="concatination_layer "+int2str(node.cols)+" "+int2str(node.cols)+" "+int2str(node.cols)+"\n"; return str;}
 };
@@ -957,6 +1128,13 @@ base_layer *new_layer(const char *layer_name, const char *config)
 		std::string act;
 		iss>>w;iss>>h;iss>>c; iss>>act; 
 		return new convolution_layer(layer_name, w,h,c, new_activation_function(act));
+	}
+	else if (str.compare("dropout") == 0)
+	{
+		float fc;
+		std::string act;
+		iss >> fc;
+		return new dropout_layer(layer_name, fc);
 	}
 	else if(str.compare("concatination")==0)
 	{
