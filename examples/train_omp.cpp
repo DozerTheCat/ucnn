@@ -1,4 +1,4 @@
-// == uCNN ====================================================================
+// == ucnn ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -19,7 +19,8 @@
 //    along with ucnn.  If not, see <http://www.gnu.org/licenses/>.
 //
 // ============================================================================
-//    train.cpp: demonstrates configuring and training a new model
+//    train_omp.cpp: demonstrates configuring and training a new model
+//    using openmp
 //
 //    Instructions: 
 //	  Add the "ucnn" folder in your include path.
@@ -30,7 +31,7 @@
 //    Set the data_path variable in the code to point to your data location.
 //	  Enable OpenMP support in your project configuration/properties
 //
-// ==================================================================== uCNN ==
+// ==================================================================== ucnn ==
 
 #include <iostream> // cout
 #include <vector>
@@ -45,17 +46,17 @@
 
 const int thread_count = 8; 
 const int mini_batch_size = 16;
-
-//#define USE_MNIST
+const float initial_learning_rate = 0.025;
+// #define USE_MNIST
 
 #ifdef USE_MNIST
 using namespace MNIST;
 std::string data_path="../data/mnist/";
-std::string model_file="../models/uCNN_MNIST.txt";
+std::string optimizer = "adam";
 #else // USE_MNIST
 using namespace CIFAR10;
 std::string data_path="../data/cifar-10-batches-bin/";
-std::string model_file="../models/uCNN_CIFAR-10.txt";
+std::string optimizer = "adam";
 #endif //USE_MNIST
 
 
@@ -77,11 +78,9 @@ float test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_image
 
 		// this utility funciton finds the max
 		if(prediction ==test_labels[k]) correct_predictions+=1;
-	
 		if(k%1000==0) progress.draw_progress(k);
 	}
 
-	float dt = progress.elapsed_seconds();
 	float error = 100.f-(float)correct_predictions/record_cnt*100.f;
 	return error;
 }
@@ -126,32 +125,31 @@ int main()
 	if(!parse_test_data(data_path, test_images, test_labels)) {std::cerr << "error: could not parse data.\n"; return 1;}
 	if(!parse_train_data(data_path, train_images, train_labels)) {std::cerr << "error: could not parse data.\n"; return 1;}
 	
-	//remove_cifar_mean(test_images, train_images);  
+	remove_cifar_mean(test_images, train_images);  
 	
 	// == setup the network  - when you train you must specify an optimizer ("sgd", "rmsprop", "adagrad", "adam")
-	ucnn::network cnn("adam"); 
+	ucnn::network cnn(optimizer.c_str());
 	// !! the thread count must be set prior to loading or creating a model !!
 	cnn.allow_threads(thread_count);  
 	cnn.set_mini_batch_size(mini_batch_size);
 	cnn.set_smart_training(true); // automate training
-	//cnn.set_learning_rate(0.01);
+	cnn.set_learning_rate(initial_learning_rate);
+	
 	// configure network 
 #ifdef USE_MNIST
-	cnn.push_back("I1","input 28 28 1");			// MNIST is 28x28x1
-	cnn.push_back("C1","convolution 5 5 15 elu");	// 5x5 kernel, 12 maps.  out size is 28-5+1=24
-	cnn.push_back("P1","max_pool 2 2");				// pool 4x4 blocks. outsize is 6
-	cnn.push_back("C2","convolution 3 3 30 elu");	// 5x5 kernel, 150 maps.  out size is 6-5+1=2
-	cnn.push_back("P2","max_pool 2 2");				// pool 2x2 blocks. outsize is 2/2=1 
-	cnn.push_back("C3", "convolution 3 3 150 elu");	// 5x5 kernel, 150 maps.  out size is 6-5+1=2
-	cnn.push_back("P3", "max_pool 3 3");				// pool 2x2 blocks. outsize is 2/2=1 
-	//cnn.push_back("D3", "dropout 0.5");             // dropout 
-	cnn.push_back("FC1","fully_connected 100 identity");// fully connected 100 nodes 
-	cnn.push_back("FC2","fully_connected 10 tanh");
+	cnn.push_back("I1", "input 28 28 1");			// MNIST is 28x28x1
+	cnn.push_back("C1", "convolution 5 5 20 elu");	// 5x5 kernel, 12 maps.  out size is 28-5+1=24
+	cnn.push_back("P1", "max_pool 4");				// pool 4x4 blocks. outsize is 6
+	cnn.push_back("C2", "convolution 5 5 200 elu");	// 5x5 kernel, 150 maps.  out size is 6-5+1=2
+	cnn.push_back("P2", "max_pool 2");				// pool 2x2 blocks. outsize is 2/2=1 
+	cnn.push_back("FC1", "fully_connected 80 identity");// fully connected 100 nodes, ReLU 
+	cnn.push_back("FC2", "fully_connected 10 tanh");
+
+
 #else // CIFAR
 	cnn.push_back("I1","input 32 32 3");				// CIFAR is 32x32x3
 	cnn.push_back("C1","convolution 5 5 32 elu");		// 5x5 kernel, 32 maps.  out size is 32-5+1=28
 	cnn.push_back("P1","max_pool 2");					// 3x3 pool stride 2. out size is (28-3)/2+1=14
-	cnn.push_back("D0", "dropout 0.05");             // dropout 
 	cnn.push_back("C2","convolution 5 5 32 elu");		// 3x3 kernel, 32 maps.  out size is 10
 	cnn.push_back("P2","max_pool 2");					// 3x3 pool stride 2. outsize is (9-3)/2+1=5
 	cnn.push_back("D1", "dropout 0.1");             // dropout 
@@ -163,17 +161,18 @@ int main()
 #endif
 	// connect all the layers. Call connect() manually for all layer connections if you need more exotic networks.
 	cnn.connect_all();
-	std::cout << cnn.get_configuration();
-	const int train_samples=(int)train_images.size();
+	std::cout << "==  Network Configuration  ====================================================" << std::endl;
+	std::cout << cnn.get_configuration() << std::endl;
+
+
+	// add headers for table of values we want to log out
+	ucnn::html_log log;
+	log.set_table_header("epoch\ttest accuracy(%)\testimated accuracy(%)\tepoch time(s)\ttotal time(s)\tlearn rate\tmodel");
+	log.set_note(cnn.get_configuration());
 
 	// setup timer/progress for overall training
 	ucnn::progress overall_progress(-1, "  overall:\t\t");
-	// add headers for table of values we want to log out
-	ucnn::html_log log;
-	log.add_header("epoch\ttest accuracy(%)\testimated accuracy(%)\tepoch time(s)\ttotal time(s)\tlearn rate\tmodel");
-	log.add_note(cnn.get_configuration());
-
-	//cnn.heat_weights();
+	const int train_samples = (int)train_images.size();
 	while(1)
 	{
 		overall_progress.draw_header(data_name() + "  Epoch  " + std::to_string((long long)cnn.get_epoch() + 1) , true);
@@ -198,8 +197,7 @@ int main()
 		}
 
 		cnn.end_epoch();
-		//if((cnn.get_epoch()>1) && (cnn.get_epoch()%5==0)) 
-		//cnn.set_learning_rate(0.1f*cnn.get_learning_rate());
+		//cnn.set_learning_rate(0.5f*cnn.get_learning_rate());
 		float dt = progress.elapsed_seconds();
 		std::cout << "  mini batch:\t\t" << mini_batch_size << "                               " << std::endl;
 		std::cout << "  training time:\t" << dt << " seconds on "<< thread_count << " threads"<< std::endl;
@@ -225,11 +223,14 @@ int main()
 		cnn.write(model_file);
 		std::cout << "  saved model:\t\t"<<model_file<<std::endl<< std::endl;
 
-		std::string log_out = int2str((long long)cnn.get_epoch()) + "\t" + float2str(100.f - error_rate) + "\t";
-		log_out += float2str(cnn.estimated_accuracy) + "\t" + float2str(dt) + "\t";
-		log_out += float2str(overall_progress.elapsed_seconds())+"\t"+float2str(cnn.get_learning_rate()) + "\t";
+		// write log file
+		std::string log_out;
+		log_out += float2str(dt) + "\t";
+		log_out += float2str(overall_progress.elapsed_seconds()) + "\t";
+		log_out += float2str(cnn.get_learning_rate()) + "\t";
 		log_out += model_file;
-		log.add_row(cnn.estimated_accuracy, 100.f - error_rate, log_out);
+		log.add_table_row(cnn.estimated_accuracy, 100.f - error_rate, log_out);
+		// will write this every epoch
 		log.write("../models/ucnn_log.htm");
 
 		// can't seem to improve

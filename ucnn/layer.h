@@ -1,4 +1,4 @@
-// == uCNN ====================================================================
+// == ucnn ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -21,7 +21,7 @@
 //
 //    layer.h:  defines layers for neural network
 //
-// ==================================================================== uCNN ==
+// ==================================================================== ucnn ==
 
 #pragma once
 
@@ -599,28 +599,28 @@ public:
 	int kernels_per_map;
 
 
-	void *filter_mem;
-	void *img_mem;
-	void *imgout_mem;
-	void *img_mem2;
-	void *imgout_mem2;
+//	void *filter_mem;
+//	void *img_mem;
+//	void *imgout_mem;
+//	void *img_mem2;
+//	void *imgout_mem2;
 
 
 	convolution_layer(const char *layer_name, int _w, int _h, int _c, activation_function *p ) : base_layer(layer_name, _w, _h, _c) 
 	{
 		p_act=p; _stride =1; kernel_rows=_h; kernel_cols=_w; maps=_c;kernels_per_map=0; pad_cols = kernel_cols-1; pad_rows = kernel_rows-1;
-		filter_mem = NULL;
-		img_mem = NULL;
-		imgout_mem = NULL;
-		img_mem2 = NULL;
-		imgout_mem2 = NULL;
+//		filter_mem = NULL;
+//		img_mem = NULL;
+//		imgout_mem = NULL;
+//		img_mem2 = NULL;
+//		imgout_mem2 = NULL;
 	}
 	virtual  ~convolution_layer() {
-		if (filter_mem) free(filter_mem);
-		if (img_mem) free(img_mem);
-		if (imgout_mem) free(imgout_mem);
-		if (img_mem2) free(img_mem2);
-		if (imgout_mem2) free(imgout_mem2);
+//		if (filter_mem) free(filter_mem);
+//		if (img_mem) free(img_mem);
+//		if (imgout_mem) free(imgout_mem);
+//		if (img_mem2) free(img_mem2);
+//		if (imgout_mem2) free(imgout_mem2);
 	}
 	virtual std::string get_config_string() {std::string str="convolution "+int2str(kernel_cols)+" "+int2str(kernel_rows)+" "+int2str(maps)+" "+p_act->name+"\n"; return str;}
 	
@@ -667,6 +667,7 @@ public:
 		}
 	}
 
+
 	virtual void accumulate_signal( const base_layer &top, const matrix &w, const int train =0)
 	{	
 		const int kstep=top.node.cols*top.node.rows;
@@ -681,8 +682,9 @@ public:
 		const int w_size = kernel_cols;
 		const int stride = _stride;		
 		const int node_size= node.cols;
+		const int top_node_size = top.node.cols;
 		const int outsize = node_size*node_size;
-
+		
 		if(kernel_rows==5)
 		{
 			// orig implementation
@@ -698,7 +700,6 @@ public:
 					{
 						for (int i = 0; i < node_size; i += stride)//stride) // intput w
 						{
-							//float v=0;
 							const float v = unwrap_2d_dot_5x5(_top_node + i + j*jstep, _w, jstep, w_size);
 							node.x[i + (j)*node_size + map_size*map] += v;
 						}
@@ -708,27 +709,36 @@ public:
 			return; 
 #else // UCNN_SSE3
 			// ensures 16byte alignment, but maybe not needed if x64
-			if(!filter_mem) filter_mem = malloc(28 * sizeof(float) + 15);
-			float *filter_ptr = (float *)(((uintptr_t)filter_mem + 15) & ~(uintptr_t)0x0F);
-			if(!img_mem) img_mem = malloc(28 * node_size*node_size * sizeof(float) + 15);
-			float *img_ptr = (float *)(((uintptr_t)img_mem + 15) & ~(uintptr_t)0x0F);
-			if(!imgout_mem) imgout_mem = malloc(node_size*node_size * sizeof(float) + 15);
-			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem + 15) & ~(uintptr_t)0x0F);
-
-			for (int k = 0; k < top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
-			{				
-				unwrap_5x5(img_ptr, &top.node.x[k*kstep], jstep);
-
-				for (int map = 0; map < map_cnt; map++) // how many maps  maps= node.chans
+				float* filter_mem = new float [28 + 4];
+				float *filter_ptr = (float *)(((uintptr_t)filter_mem + 15) & ~(uintptr_t)0x0F);
+				float* img_mem = new float [28 * node_size*node_size+4];
+				float *img_ptr = (float *)(((uintptr_t)img_mem + 15) & ~(uintptr_t)0x0F);
+				float *imgout_mem = new float [node_size*node_size + 4];
+				float *imgout_ptr = (float *)(((uintptr_t)imgout_mem + 15) & ~(uintptr_t)0x0F);
+			//		memset(img_ptr, 0, 28*node_size*node_size * sizeof(float));
+		//				memset(imgout_ptr, 0, node_size*node_size * sizeof(float));
+		//				memset(filter_ptr, 0, 28 * sizeof(float));
+				for (int k = 0; k < top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
 				{
-					memcpy(filter_ptr, &w.x[(map + k*maps)*kernel_size], 25 * sizeof(float));
-					//dot_unwrapped_sse(img_ptr, filter_ptr, imgout_ptr, outsize,28);
-					dot_unwrapped_5x5_sse(img_ptr, filter_ptr, imgout_ptr, outsize);
+					unwrap_aligned(img_ptr, &top.node.x[k*kstep], jstep, 5);
 
-					float *out = node.x + map_size*map;
-					for (int j = 0; j < outsize; j++) out[j] += imgout_ptr[j];
+					//unwrap_aligned_5x5(img_ptr, &top.node.x[k*kstep], jstep);
+
+					for (int map = 0; map < map_cnt; map++) // how many maps  maps= node.chans
+					{
+						memcpy(filter_ptr, &w.x[(map + k*maps)*kernel_size], 25 * sizeof(float));
+	//					filter_ptr[25] = 0; filter_ptr[26] = 0; filter_ptr[27] = 0;
+						dot_unwrapped_5x5_sse(img_ptr, filter_ptr, imgout_ptr, outsize);
+
+						float *out = node.x + map_size*map;
+						for (int j = 0; j < outsize; j++) out[j] += imgout_ptr[j];
+					}
 				}
-			}
+				delete [] filter_mem;
+				delete [] imgout_mem;
+				delete [] img_mem;
+			return;
+			
 #endif // UCNN_SSE3
 		}
 		else if(kernel_rows==3)
@@ -751,16 +761,17 @@ public:
 				}
 			}
 #else // UCNN_SSE3
-			if (!filter_mem) filter_mem = malloc(12 * sizeof(float) + 15);
+			void * filter_mem = malloc(12 * sizeof(float) + 16);
 			float *filter_ptr = (float *)(((uintptr_t)filter_mem + 15) & ~(uintptr_t)0x0F);
-			if (!img_mem) img_mem = malloc(12 * node_size*node_size * sizeof(float) + 15);
-			float *img_ptr = (float *)(((uintptr_t)img_mem + 15) & ~(uintptr_t)0x0F);
-			if (!imgout_mem) imgout_mem = malloc(node_size*node_size * sizeof(float) + 15);
-			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem + 15) & ~(uintptr_t)0x0F);
+			void * img_mem = malloc(12 * node_size*node_size * sizeof(float) + 16);
+			float *img_ptr = (float *)(((uintptr_t)img_mem + 16) & ~(uintptr_t)0x0F);
+			void *imgout_mem = malloc(node_size*node_size * sizeof(float) + 16);
+			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem + 16) & ~(uintptr_t)0x0F);
 
 			for (int k = 0; k < top_chans; k++) // input channels --- same as kernels_per_map - kern for each input
 			{
-				unwrap_3x3(img_ptr, &top.node.x[k*kstep], jstep);
+				unwrap_aligned(img_ptr, &top.node.x[k*kstep], jstep, 3);
+				//unwrap_3x3(img_ptr, &top.node.x[k*kstep], jstep);
 				for (int map = 0; map < map_cnt; map++) // how many maps  maps= node.chans
 				{
 					memcpy(filter_ptr, &w.x[(map + k*maps)*kernel_size], 9 * sizeof(float));
@@ -771,6 +782,10 @@ public:
 					for (int j = 0; j < outsize; j++) out[j] += imgout_ptr[j];
 				}
 			}
+			free(filter_mem);
+			free(img_mem);
+			free(imgout_mem);
+			return;
 #endif //UCNN_SSE3
 		}
 		else
@@ -820,12 +835,12 @@ public:
 			const int map_cnt=maps;
 			const int top_delta_size = top.delta.rows;
 			const int top_delta_chans = top.delta.chans;
-
+			
 		if(kernel_cols==5)
 		{					
 #ifndef UCNN_SSE3
 			for(int k=0; k<top_delta_chans; k++) // input channels --- same as kernels_per_map - kern for each input
-			{
+			{ 
 				_w=& w.x[k*maps*kernel_size];
 				//continue;
 				for(int map=0; map<map_cnt; map++) // how many maps  maps= node.chans
@@ -847,16 +862,16 @@ public:
 				}
 			}
 #else// UCNN_SSE3
-			if (!filter_mem) filter_mem = malloc(28 * sizeof(float) + 15);
+			void * filter_mem = malloc(28 * sizeof(float) + 15);
 			float *filter_ptr = (float *)(((uintptr_t)filter_mem + 15) & ~(uintptr_t)0x0F);
-			if (!img_mem2) img_mem2 = malloc(28 * delta_size*delta_size * sizeof(float) + 15);
-			float *img_ptr = (float *)(((uintptr_t)img_mem2 + 15) & ~(uintptr_t)0x0F);
-			if (!imgout_mem2) imgout_mem2 = malloc(delta_size*delta_size * sizeof(float) + 15);
-			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem2 + 15) & ~(uintptr_t)0x0F);
+			void * img_mem = malloc(28 * delta_size*delta_size * sizeof(float) + 15);
+			float *img_ptr = (float *)(((uintptr_t)img_mem + 15) & ~(uintptr_t)0x0F);
+			void *imgout_mem = malloc(delta_size*delta_size * sizeof(float) + 15);
+			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem + 15) & ~(uintptr_t)0x0F);
 
 			for (int map = 0; map<map_cnt; map++) // how many maps  maps= node.chans
 			{
-				unwrap_5x5(img_ptr, &delta_pad.x[map*map_size], delta_size);
+				unwrap_aligned(img_ptr, &delta_pad.x[map*map_size], delta_size,5);
 
 				const int outsize = top_delta_size*top_delta_size;
 				for (int k = 0; k<top_delta_chans; k++) // input channels --- same as kernels_per_map - kern for each input
@@ -872,6 +887,9 @@ public:
 
 				} // for map
 			}
+			free(imgout_mem);
+			free(img_mem);
+			free(filter_mem);
 
 #endif // #ifndef UCNN_SSE3
 
@@ -904,16 +922,16 @@ public:
 				}
 			}
 #else// UCNN_SSE3
-			if (!filter_mem) filter_mem = malloc(12 * sizeof(float) + 15);
+			void * filter_mem = malloc(12 * sizeof(float) + 15);
 			float *filter_ptr = (float *)(((uintptr_t)filter_mem + 15) & ~(uintptr_t)0x0F);
-			if (!img_mem2) img_mem2 = malloc(12 * delta_size*delta_size * sizeof(float) + 15);
-			float *img_ptr = (float *)(((uintptr_t)img_mem2 + 15) & ~(uintptr_t)0x0F);
-			if (!imgout_mem2) imgout_mem2 = malloc(delta_size*delta_size * sizeof(float) + 15);
-			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem2 + 15) & ~(uintptr_t)0x0F);
+			void * img_mem = malloc(12 * delta_size*delta_size * sizeof(float) + 15);
+			float *img_ptr = (float *)(((uintptr_t)img_mem + 15) & ~(uintptr_t)0x0F);
+			void *imgout_mem = malloc(delta_size*delta_size * sizeof(float) + 15);
+			float *imgout_ptr = (float *)(((uintptr_t)imgout_mem + 15) & ~(uintptr_t)0x0F);
 
 			for (int map = 0; map<map_cnt; map++) // how many maps  maps= node.chans
 			{
-				unwrap_3x3(img_ptr, &delta_pad.x[map*map_size], delta_size);
+				unwrap_aligned(img_ptr, &delta_pad.x[map*map_size], delta_size,3);
 
 				const int outsize = top_delta_size*top_delta_size;
 				for (int k = 0; k<top_delta_chans; k++) // input channels --- same as kernels_per_map - kern for each input
@@ -928,6 +946,9 @@ public:
 
 				} // for map
 			}
+			free(imgout_mem);
+			free(img_mem);
+			free(filter_mem);
 
 #endif // #ifndef UCNN_SSE3
 		}
@@ -972,6 +993,7 @@ public:
 
 		dw.resize(kernel_cols, kernel_rows,kernels_per_map*maps);
 		dw.fill(0);
+		
 		// node x already init to 0
 		output_index=0;
 		const int top_node_size= top.node.cols;
@@ -1049,6 +1071,7 @@ public:
 		}
 		else
 		{
+		
 			for(int map=0; map<maps; map++) // how many maps  maps= node.chans
 			{
 				const float *_delta =&delta.x[map*map_size];

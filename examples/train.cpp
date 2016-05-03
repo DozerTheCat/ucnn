@@ -1,4 +1,4 @@
-// == uCNN ====================================================================
+// == ucnn ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -29,7 +29,7 @@
 //		(http://www.cs.toronto.edu/~kriz/cifar.html)
 //    Set the data_path variable in the code to point to your data location.
 //
-// ==================================================================== uCNN ==
+// ==================================================================== ucnn ==
 
 #include <iostream> // cout
 #include <vector>
@@ -45,11 +45,9 @@
 //*
 using namespace MNIST;
 std::string data_path="../data/mnist/";
-std::string model_file="../models/uCNN_MNIST.txt";
 /*/
 using namespace CIFAR10;
 std::string data_path="../data/cifar-10-batches-bin/";
-std::string model_file="../models/uCNN_CIFAR-10.txt";
 //*/
 
 float test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images, const std::vector<int> &test_labels)
@@ -114,8 +112,8 @@ int main()
 	if(!parse_train_data(data_path, train_images, train_labels)) {std::cerr << "error: could not parse data.\n"; return 1;}
 
 	// == setup the network  - when you train you must specify an optimizer ("sgd", "rmsprop", "adagrad")
-	ucnn::network cnn("sgd"); 
-	cnn.set_smart_training(true); // speed up training
+	ucnn::network cnn("adagrad"); 
+	cnn.set_smart_training(false); // speed up training
 	
 	// configure network 
 	if(data_name().compare("MNIST")==0)

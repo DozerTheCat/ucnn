@@ -1,11 +1,11 @@
 CC=g++
-CFLAGS= -I../ucnn/ -std=c++11 -O3
-CFLAGS_OMP= -I../ucnn/ -std=c++11 -O3 -DUCNN_OPM
-UCNN_HEADERS =  ../ucnn/ucnn.h ../ucnn/network.h ../ucnn/layer.h\
-../ucnn/activation.h ../ucnn/cost.h ../ucnn/optimizer.h ../ucnn/core_math.h
+CFLAGS= -I../ucnn/ -std=c++11 -O3  -msse4 -mavx 
+CFLAGS_OMP= -I../ucnn/ -std=c++11 -O3 -DUCNN_OPM  -msse4 -mavx
+#UCNN_HEADERS =  ../ucnn/ucnn.h ../ucnn/network.h ../ucnn/layer.h\
+#../ucnn/activation.h ../ucnn/cost.h ../ucnn/optimizer.h ../ucnn/core_math.h
 
-UCNN_HEADERS_OMP =  ../ucnn/ucnn_omp.h ../ucnn/ucnn.h ../ucnn/network.h ../ucnn/layer.h\
-../ucnn/activation.h ../ucnn/cost.h ../ucnn/optimizer.h ../ucnn/core_math.h
+#UCNN_HEADERS_OMP =  ../ucnn/ucnn_omp.h ../ucnn/ucnn.h ../ucnn/network.h ../ucnn/layer.h\
+#../ucnn/activation.h ../ucnn/cost.h ../ucnn/optimizer.h ../ucnn/core_math.h
 
 all: test test_omp train train_omp
 

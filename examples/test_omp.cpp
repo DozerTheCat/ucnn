@@ -1,4 +1,4 @@
-// == uCNN ====================================================================
+// == ucnn ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -31,13 +31,14 @@
 //	  Enable OpenMP support in your project configuration/properties
 //    "<><><><><><>" will preceed changes from the non-threaded version
 //
-// ==================================================================== uCNN ==
+// ==================================================================== ucnn ==
 
 #include <iostream> // cout
 #include <vector>
 #include <sstream>
 #include <fstream>
 #include <stdio.h>
+#include <cstdio>
 #include <tchar.h>
 
 // <><><><><><<><><><><><> instead of "ucnn.h" include "ucnn_omp.h"
@@ -49,14 +50,14 @@
 const int thread_count = 8; 
 
 // by selecting a different namespace, we'll call different data parsing functions below
-//*
+/*
 using namespace MNIST;
 std::string data_path="../data/mnist/";
-std::string model_file="../models/uCNN_MNIST.txt";
+std::string model_file="../models/ucnn_mnist.txt";
 /*/
 using namespace CIFAR10;
 std::string data_path="../data/cifar-10-batches-bin/";
-std::string model_file = "../models/ucnn_cifar_dropout.txt";
+std::string model_file = "../models/ucnn_cifar.txt";
 //*/
 
 void test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images, const std::vector<int> &test_labels)
@@ -66,19 +67,33 @@ void test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images
 
 	int out_size=cnn.out_size(); // we know this to be 10 for MNIST
 	int correct_predictions=0;
-	const int record_cnt= (int)test_images.size();
+	const int record_cnt = 1000;// (int)test_images.size();
 
+	std::vector<int> single;
+	int a, b;
+	FILE *f = fopen("./single.txt", "rt");
+	for (int i = 0; i < 1000; i++)
+	{
+		std::fscanf(f, "%d\t%d\n", &a, &b);
+		single.push_back(b);
+	}fclose(f);
 	// <><><><><><<><><><><><> use standard omp parallel for loop, with schedule dynamic the screen output will still somewhat work
 	#pragma omp parallel num_threads(thread_count) 
 	#pragma omp for reduction(+:correct_predictions) schedule(dynamic)
-	for(int k=0; k<record_cnt; k++)
+	for (int k = 0; k < record_cnt; k++)
 	{
-		// predict_class returnes the output index of the highest response
-		const int prediction = cnn.predict_class(test_images[k].data());
+		int prediction;
+			// predict_class returnes the output index of the highest response
+			prediction = cnn.predict_class(test_images[k].data());
+			//			FILE *f = fopen("./single.txt", "at");
+			//				std::fprintf(f, "%d\t%d\n", k, prediction);
+			//			fclose(f);
+		//	if (single[k] != prediction) std::cout << "pisser\n";
 
-		if (prediction == test_labels[k]) correct_predictions++;
+			if (prediction == test_labels[k]) correct_predictions++;
 
-		if (k % 1000 == 0) progress.draw_progress(k);
+			if (k % 1000 == 0) progress.draw_progress(k);
+		
 	}
 
 	float dt = progress.elapsed_seconds();
@@ -86,11 +101,7 @@ void test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images
 	std::cout << "  records: " << test_images.size() << std::endl;
 	std::cout << "  speed: " << (float)record_cnt/dt << " records/second" << std::endl;
 	std::cout << "  accuracy: " << (float)correct_predictions/record_cnt*100.f <<"%" << std::endl;
-//	FILE *f = fopen("./log.txt", "at");
-//	fprintf(f,"%f\n", (float)correct_predictions / record_cnt*100.f);
-//	fclose(f);
 }
-
 
 int main()
 {
@@ -109,10 +120,11 @@ int main()
 	// alternatively you can create a different ucnn::network for each thread and use each network in a separate thread
 	// !! the thread count must be set prior to loading or creating a model !!
 	cnn.allow_threads(thread_count);  
-	// load model 
-	int epoch = 1;
 
+	// load model 
 	if (!cnn.read(model_file)) { std::cerr << "error: could not read model.\n"; return 1; }
+	std::cout << "ucnn configuration:" << std::endl;
+	std::cout << cnn.get_configuration() << std::endl;
 
 	// == run the test 
 	std::cout << "Testing " << data_name() << ":" << std::endl;

@@ -1,4 +1,4 @@
-﻿// == uCNN ====================================================================
+﻿// == ucnn ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -21,7 +21,7 @@
 //
 //    ucnn.h:  include this one file to use ucnn without OpenMP
 //
-// ==================================================================== uCNN ==
+// ==================================================================== ucnn ==
 #pragma once
 #define UCNN_SSE3
 
@@ -52,15 +52,6 @@
 
 namespace ucnn
 {
-	void replaceAll(std::string& str, const std::string& from, const std::string& to) {
-		if (from.empty())
-			return;
-		size_t start_pos = 0;
-		while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
-			str.replace(start_pos, from.length(), to);
-			start_pos += to.length(); // In case 'to' contains 'from', like replacing 'x' with 'yx'
-		}
-	}
 
 // class to handle timing and drawing text progress output
 class progress
@@ -144,41 +135,60 @@ class html_log
 public:
 	html_log() {};
 
-	void add_header(std::string tab_header) { header=tab_header;}
-	void add_row(float train_acccuracy, float test_accuracy, std::string tab_row)
+	// the header you set here should have tab \t separated column headers that match what will go in the row
+	// the first 3 columns are always epoch, test accuracy, est accuracy
+	void set_table_header(std::string tab_header) { header=tab_header;}
+	// tab_row should be \t separated things to put after first 3 columns
+	void add_table_row(float train_acccuracy, float test_accuracy, std::string tab_row)
 	{
 		log_stuff s;
 		s.str = tab_row; s.test_accurracy = test_accuracy; s.train_accurracy_est = train_acccuracy;
 		log.push_back(s);
 	}
-	void add_note(std::string msg) {notes = msg;}
+	void set_note(std::string msg) {notes = msg;}
 	bool write(std::string filename) {
 
-		std::string top = "<!DOCTYPE html><html><head><meta http-equiv=\"content - type\" content=\"text/html; charset = UTF - 8\"><style>table, th, td{border: 1px solid black; border - collapse: collapse; } th, td{ padding: 5px;}</style><meta name=\"robots\" content=\"noindex, nofollow\"><meta name=\"googlebot\" content=\"noindex, nofollow\"><meta http-equiv=\"refresh\" content=\"30\"/><script type=\"text/javascript\" src=\"/js/lib/dummy.js\"></script><link rel=\"stylesheet\" type=\"text/css\" href=\"/css/result-light.css\"><style type=\"text/css\"></style><title>Micro CNN Training Report</title></head><body><script type=\"text/javascript\" src=\"https://www.gstatic.com/charts/loader.js\"></script>Training Summary <script type=\"text/javascript\">document.write(Date());</script>:<div id = \"chart_div\"></div><script type = 'text/javascript'>//<![CDATA[\n";
+		std::string top = "<!DOCTYPE html><html><head><meta http-equiv=\"content - type\" content=\"text/html; charset = UTF - 8\"><style>table, th, td{border: 1px solid black; border - collapse: collapse; } th, td{ padding: 5px;}</style><meta name=\"robots\" content=\"noindex, nofollow\"><meta name=\"googlebot\" content=\"noindex, nofollow\"><meta http-equiv=\"refresh\" content=\"30\"/><script type=\"text/javascript\" src=\"/js/lib/dummy.js\"></script><link rel=\"stylesheet\" type=\"text/css\" href=\"/css/result-light.css\"><style type=\"text/css\"></style><title>Micro CNN Training Report</title></head><body><script type=\"text/javascript\" src=\"https://www.gstatic.com/charts/loader.js\"></script><b><center>Training Summary <script type=\"text/javascript\">document.write(Date());</script></center></b><div id = \"chart_div\"></div><script type = 'text/javascript'>//<![CDATA[\n";
 		top += "google.charts.load('current', { packages: ['corechart', 'line'] });\ngoogle.charts.setOnLoadCallback(drawLineColors);\nfunction drawLineColors() {";
 		top += "\nvar data = new google.visualization.DataTable();data.addColumn('number', 'Epoch');data.addColumn('number', 'Training Estimate');data.addColumn('number', 'Validation Testing');data.addRows([";
 		std::string data = "";
 		float min = 100;
 		for (int i = 0; i < log.size(); i++)
 		{
-			if ((100. - log[i].train_accurracy_est) < min) min = (100. - log[i].train_accurracy_est);
-			if ((100. - log[i].test_accurracy) < min) min = (100. - log[i].test_accurracy);
-			data += "[" + int2str(i) + "," + float2str(100. - log[i].train_accurracy_est) + "," + float2str(100. - log[i].test_accurracy) + "],";
+			if ((100.f - log[i].train_accurracy_est) < min) min = (100.f - log[i].train_accurracy_est);
+			if ((100.f - log[i].test_accurracy) < min) min = (100.f - log[i].test_accurracy);
+			data += "[" + int2str(i) + "," + float2str(100.f - log[i].train_accurracy_est) + "," + float2str(100.f - log[i].test_accurracy) + "],";
 		}
 		float min_10 = min;
 //		while (min_10 > min) min_10 /= 10.f;
 
 		std::string mid = "]);var options = { 'height':400, hAxis: {title: 'Epoch', logScale: true},vAxis : {title: 'Error (%)', logScale: true, viewWindow: {min:"+float2str(min_10)+",max: 100},ticks: [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1,2, 5, 10, 20, 50, 100] },colors : ['#313055','#F52B00'] };var chart = new google.visualization.LineChart(document.getElementById('chart_div')); chart.draw(data, options);}//]]>\n </script>";
 
-		std::string msg = "<table style='width:100 %'>";
+		std::string msg = "<table style='width:100 %' align='center'>";
 		int N = (int)log.size();
 		msg += "<tr><td>" + header + "</td></tr>";
-		for (int i = N - 1; i >=0; i--)
-			msg += "<tr><td>" + log[i].str + "</td></tr>";
+		int best = N - 1;
+		int best_est = N - 1;
+		for (int i = N - 1; i >= 0; i--)
+		{
+			if (log[i].test_accurracy > log[best].test_accurracy) best = i;
+			if (log[i].train_accurracy_est > log[best_est].train_accurracy_est) best_est = i;
+		}
+		for (int i = N - 1; i >= 0; i--)
+		{
+			msg += "<tr><td>" + int2str(i + 1);
+			// make best green
+			if (i == best)	msg += "</td><td bgcolor='#00FF00'>";
+			else msg += "</td><td>";
+			msg+=float2str(log[i].test_accurracy);
+			// mark bad trend in training
+			if (i > best_est) msg += "</td><td bgcolor='#FFFF00'>";
+			else msg += "</td><td>";
+			msg+=float2str(log[i].train_accurracy_est)+ "</td><td>" + log[i].str + "</td></tr>";
+		}
+		replace_str(msg, "\t", "</td><td>");
 
-		replaceAll(msg, "\t", "</td><td>");
-		replaceAll(notes, "\n", "<br>");
-
+		replace_str(notes, "\n", "<br>");
 		std::string bottom = "</tr></table><br>"+notes+"</body></html>";
 
 		std::ofstream f(filename.c_str());

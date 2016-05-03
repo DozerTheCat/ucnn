@@ -1,4 +1,4 @@
-// == uCNN ====================================================================
+// == ucnn ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -19,7 +19,7 @@
 //    along with ucnn.  If not, see <http://www.gnu.org/licenses/>.
 //
 // ============================================================================
-//    test.cpp:  Simple example using pre-trained model to test uCNN
+//    test.cpp:  Simple example using pre-trained model to test ucnn
 //
 //    Instructions: 
 //	  Add the "ucnn" folder in your include path.
@@ -29,7 +29,7 @@
 //		(http://www.cs.toronto.edu/~kriz/cifar.html)
 //    Set the data_path variable in the code to point to your data location.
 //
-// ==================================================================== uCNN ==
+// ==================================================================== ucnn ==
 
 #include <iostream> // cout
 #include <vector>
@@ -46,11 +46,11 @@
 /*
 using namespace MNIST;
 std::string data_path="../data/mnist/";
-std::string model_file="../models/uCNN_MNIST.txt";
+std::string model_file="../models/ucnn_mnist.txt";
 /*/
 using namespace CIFAR10;
 std::string data_path="../data/cifar-10-batches-bin/";
-std::string model_file="../models/ucnn_cifar_dropout.txt";
+std::string model_file="../models/ucnn_cifar.txt";
 //*/
 
 void test(ucnn::network &cnn, const std::vector<std::vector<float>> &test_images, const std::vector<int> &test_labels)
@@ -94,8 +94,9 @@ int main()
 	ucnn::network cnn; 
 	// load model
 	if(!cnn.read(model_file)) {std::cerr << "error: could not read model.\n"; return 1;}
+	std::cout << "ucnn configuration:" << std::endl;
+	std::cout << cnn.get_configuration() << std::endl;
 
-	std::cout << cnn.get_layer_configuration() << std::endl;
 	// == run the test
 	std::cout << "Testing " << data_name() << ":" << std::endl;
 	// this function will loop through all images, call predict, and print out stats

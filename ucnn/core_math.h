@@ -1,4 +1,4 @@
-// == uCNN ====================================================================
+// == ucnn ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -21,7 +21,7 @@
 //
 //    core_math.h: defines matrix class and math functions
 //
-// ==================================================================== uCNN ==
+// ==================================================================== ucnn ==
 
 
 #pragma once
@@ -30,6 +30,8 @@
 #include <string.h>
 #include <string>
 #include <cstdlib>
+#include <random>
+
 
 namespace ucnn
 {
@@ -50,22 +52,22 @@ inline float dot(const float *x1, const float *x2, const int size)
 	};
 }
 
-
-inline void unwrap_5x5(float *aligned_out, const float *in, const int in_size)
+inline void unwrap_aligned_5x5(float *aligned_out, const float *in, const int in_size)
 {
-	float *img = aligned_out;
 	const int node_size = in_size - 5 + 1;
+	int c1 = 0;
 	for (int j = 0; j < node_size; j += 1)//stride) // intput w
 	{
 		for (int i = 0; i < node_size; i += 1)//stride) // intput w
 		{
 			const float *tn = in + j*in_size + i;
-			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
-			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
-			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
-			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
-			memcpy(img, tn, 5 * sizeof(float)); tn += in_size; img += 5;
-			memset(img, 0, 3 * sizeof(float)); img += 3; // junk pad
+			int c2 = 0;
+			memcpy(&aligned_out[c1], &tn[c2], 5 * sizeof(float)); c1 += 5; c2 += in_size;
+			memcpy(&aligned_out[c1], &tn[c2], 5 * sizeof(float)); c1 += 5; c2 += in_size;
+			memcpy(&aligned_out[c1], &tn[c2], 5 * sizeof(float)); c1 += 5; c2 += in_size;
+			memcpy(&aligned_out[c1], &tn[c2], 5 * sizeof(float)); c1 += 5; c2 += in_size;
+			memcpy(&aligned_out[c1], &tn[c2], 5 * sizeof(float)); c1 += 5; c2 += in_size;
+			c1 += 3;
 		}
 	}
 }
@@ -123,31 +125,57 @@ inline void dot_unwrapped_5x5_sse(const float *_img, const float *filter_ptr, fl
 		c1 = _mm_mul_ps(a, b);
 		c0 = _mm_add_ps(c0, c1);
 
-		a = _mm_load_ps(_img + 24); b = _mm_load_ps(filter_ptr + 24);
-		c1 = _mm_mul_ps(a, b);
-		c0 = _mm_add_ps(c0, c1);
+
+	//	a = _mm_load_ps(_img + 24); b = _mm_load_ps(filter_ptr + 24);
+	//	c1 = _mm_mul_ps(a, b);
+	//	a = _mm_set_ps(0, 0, 0, 1);
+	//	c1 = _mm_mul_ps(a, c1);
+	//	c0 = _mm_add_ps(c0, c1);
 
 		c0 = _mm_hadd_ps(c0, c0);
 		c0 = _mm_hadd_ps(c0, c0);
 
 		_mm_store_ss(&out[j], c0);
+		out[j] += _img[24] * filter_ptr[24];
 		_img += 28;
 	}
 }
 
-inline void unwrap_3x3(float *aligned_out, const float *in, const int in_size)
+inline void unwrap_aligned_3x3(float *aligned_out, const float *in, const int in_size)
 {
-	float *img = aligned_out;
 	const int node_size = in_size - 3 + 1;
+	int c1 = 0;
 	for (int j = 0; j < node_size; j += 1)//stride) // intput w
 	{
 		for (int i = 0; i < node_size; i += 1)//stride) // intput w
 		{
 			const float *tn = in + j*in_size + i;
-			memcpy(img, tn, 3 * sizeof(float)); tn += in_size; img += 3;
-			memcpy(img, tn, 3 * sizeof(float)); tn += in_size; img += 3;
-			memcpy(img, tn, 3 * sizeof(float)); tn += in_size; img += 3;
-			memset(img, 0, 3 * sizeof(float)); img += 3; // junk pad
+			int c2 = 0;
+			memcpy(&aligned_out[c1], &tn[c2], 3 * sizeof(float)); c1 += 3; c2 += in_size;
+			memcpy(&aligned_out[c1], &tn[c2], 3 * sizeof(float)); c1 += 3; c2 += in_size;
+			memcpy(&aligned_out[c1], &tn[c2], 3 * sizeof(float)); c1 += 3; c2 += in_size;
+			c1 += 3;
+		}
+	}
+}
+
+inline void unwrap_aligned(float *aligned_out, const float *in, const int in_size, const int kernel_size)
+{
+	const int node_size = in_size - kernel_size + 1;
+	int c1 = 0;
+	int mul = (int)((kernel_size*kernel_size +3) / 4);
+	int leftover = mul * 4- kernel_size*kernel_size;
+	for (int j = 0; j < node_size; j += 1)//stride) // intput w
+	{
+		for (int i = 0; i < node_size; i += 1)//stride) // intput w
+		{
+			const float *tn = in + j*in_size + i;
+			int c2 = 0;
+			for (int ii = 0; ii < kernel_size; ii += 1)//stride) // intput w
+			{
+				memcpy(&aligned_out[c1], &tn[c2], kernel_size * sizeof(float)); c1 += kernel_size; c2 += in_size;
+			}
+			c1 += leftover;
 		}
 	}
 }
@@ -166,19 +194,21 @@ inline void dot_unwrapped_3x3_sse(const float *_img, const float *filter_ptr, fl
 		c1 = _mm_mul_ps(a, b);
 		c0 = _mm_add_ps(c0, c1);
 
-		a = _mm_load_ps(_img + 8); b = _mm_load_ps(filter_ptr + 8);
-		c1 = _mm_mul_ps(a, b);
-		c0 = _mm_add_ps(c0, c1);
+//		a = _mm_load_ps(_img + 8); b = _mm_load_ps(filter_ptr + 8);
+//		c1 = _mm_mul_ps(a, b);
+//		c0 = _mm_add_ps(c0, c1);
 
 		c0 = _mm_hadd_ps(c0, c0);
 		c0 = _mm_hadd_ps(c0, c0);
 
 		_mm_store_ss(&out[j], c0);
 
+		out[j] += _img[8] * filter_ptr[8];
+
 		_img += 12;
 	}
 }
-
+// not finished
 inline void dot_unwrapped_sse(const float *_img, const float *filter_ptr, float *out, const int outsize, const int filtersize)
 {
 	__m128 a, b, c0, c1;
@@ -453,6 +483,20 @@ public:
 		return average;
 	}
 	void fill(float val) { for(int i=0; i<_size; i++) x[i]=val; }
+	void fill_random_uniform(float range)
+	{
+		std::mt19937 gen(0);
+		std::uniform_real_distribution<float> dst(-range, range);
+		for (int i = 0; i<_size; i++) x[i] = dst(gen);
+	}
+	void fill_random_normal(float std)
+	{
+		std::mt19937 gen(0);
+		std::normal_distribution<float> dst(0, std);
+		for (int i = 0; i<_size; i++) x[i] = dst(gen);
+	}
+
+
 	// deep copy
 	inline matrix& operator =(const matrix &m)
 	{

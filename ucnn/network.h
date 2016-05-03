@@ -1,4 +1,4 @@
-// == uCNN ====================================================================
+// == ucnn ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -19,13 +19,12 @@
 //    along with ucnn.  If not, see <http://www.gnu.org/licenses/>.
 //
 //
-//    network.h: The main artificial neural network graph for uCNN
+//    network.h: The main artificial neural network graph for ucnn
 //
-// ==================================================================== uCNN ==
+// ==================================================================== ucnn ==
 
 #pragma once
 
-#include <random>
 #include <string>
 #include <iostream> // cout
 #include <fstream>
@@ -63,6 +62,16 @@ namespace ucnn {
 #include <unistd.h>
 	void ucnn_sleep(unsigned milliseconds) { usleep(milliseconds * 1000); }
 #endif
+
+void replace_str(std::string& str, const std::string& from, const std::string& to) {
+	if (from.empty())
+		return;
+	size_t start_pos = 0;
+	while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
+		str.replace(start_pos, from.length(), to);
+		start_pos += to.length(); // In case 'to' contains 'from', like replacing 'x' with 'yx'
+	}
+}
 
 // returns Energy (euclidian distance / 2) and max index
 float match_labels(const float *out, const float *target, const int size, int *best_index = NULL)
@@ -310,37 +319,31 @@ public:
 		// after all connections, run through and do weights with correct fan count
 
 		// initialize weights - ToDo: separate and allow users to configure(?)
-		static std::mt19937 gen(1);
 		if(strcmp(l_bottom->p_act->name,"tanh")==0)
 		{
 			// xavier : for tanh
 			float weight_base = (float)(std::sqrt(6./( (double)fan_in+(double)fan_out)));
 	//		float weight_base = (float)(std::sqrt(.25/( (double)fan_in)));
-			std::uniform_real_distribution<float> dst(-weight_base, weight_base);
-			for(int i=0; i<w->size(); i++) w->x[i]=dst(gen);
+			w->fill_random_uniform(weight_base);
 		}
 		else if(strcmp(l_bottom->p_act->name,"sigmoid")==0)
 		{
 			// xavier : for sigmoid
 			float weight_base = 4.f*(float)(std::sqrt(6./( (double)fan_in+(double)fan_out)));
-			std::uniform_real_distribution<float> dst(-weight_base, weight_base);
-			for(int i=0; i<w->size(); i++) w->x[i]=dst(gen);
+			w->fill_random_uniform(weight_base);
 		}
 		else if((strcmp(l_bottom->p_act->name,"lrelu")==0) || (strcmp(l_bottom->p_act->name,"relu")==0)
 			|| (strcmp(l_bottom->p_act->name,"vlrelu")==0) || (strcmp(l_bottom->p_act->name,"elu")==0))
 		{
 			// he : for relu
 			float weight_base = (float)(std::sqrt(2./(double)fan_in));
-
-			std::normal_distribution<float> dst(0, weight_base);
-			for(int i=0; i<w->size(); i++) w->x[i]=dst(gen);
+			w->fill_random_normal(weight_base);
 		}
 		else
 		{
 			// lecun : orig
 			float weight_base = (float)(std::sqrt(1./(double)fan_in));
-			std::uniform_real_distribution<float> dst(-weight_base, weight_base);
-			for(int i=0; i<w->size(); i++) w->x[i]=dst(gen);
+			w->fill_random_uniform(weight_base);
 		}
 	}
 
@@ -388,7 +391,10 @@ public:
 		__for__(auto layer __in__ layer_sets[_thread_number]) layer->node.fill(0.f); 
 
 		// first layer assumed input. copy input to it 
-		memcpy(layer_sets[_thread_number][0]->node.x, in, sizeof(float)*layer_sets[_thread_number][0]->node.size());
+		for (int i = 0; i < layer_sets[_thread_number][0]->node.size(); i++)
+			layer_sets[_thread_number][0]->node.x[i] = in[i];
+		//memcpy(layer_sets[_thread_number][0]->node.x, in, 
+		//	sizeof(float)*layer_sets[_thread_number][0]->node.size());
 
 		// for all layers
 		__for__(auto layer __in__ layer_sets[_thread_number])
@@ -475,6 +481,7 @@ public:
 		for (auto i=0; i<layer_count; i++)
 		{
 			getline(ifs,layer_name);
+			replace_str(layer_name, "\r", "");
 			getline(ifs,layer_def);
 			push_back(layer_name.c_str(),layer_def.c_str());
 		}
@@ -489,7 +496,9 @@ public:
 		for (auto i=0; i<graph_count; i++)
 		{
 			getline(ifs,layer_name1);
+			replace_str(layer_name1, "\r", "");
 			getline(ifs,layer_name2);
+			replace_str(layer_name2, "\r", "");
 			connect(layer_name1.c_str(),layer_name2.c_str());
 		}
 
@@ -617,7 +626,8 @@ public:
 			__for__(auto &link __in__ layer->backward_linked_layers)
 			{
 				int w_index = (int)link.first;
-				if (dW_sets[0][w_index].size() > 0) _optimizer->increment_w(W[w_index], w_index, dW_sets[0][w_index]);  // -- 10%
+				if (dW_sets[MAIN_LAYER_SET][w_index].size() > 0)
+					_optimizer->increment_w(W[w_index], w_index, dW_sets[MAIN_LAYER_SET][w_index]);  // -- 10%
 
 			}
 			if (dynamic_cast<convolution_layer*> (layer) != NULL)  continue;
@@ -691,30 +701,20 @@ public:
 		train_skipped = 0;
 		train_updates = 0;
 		train_samples = 0;
-		if (estimated_accuracy > 0 && _smart_train && old_estimated_accuracy>0)
-		{
-			if ((old_estimated_accuracy - estimated_accuracy) == 0) // accuracy doesn't change
-			{
-				stuck_counter++;
-				if (stuck_counter > 4) // stuck for 4 epochs, heat up weights
-				{
-//					heat_weights();
-					set_learning_rate((0.95)*get_learning_rate());
-					if (get_learning_rate() < 0.000001f)
-					{
-						heat_weights();
-						set_learning_rate(0.000001f);
-					}
+		if (epoch_count == 0) reset_optimizer();
 	
-					stuck_counter = 0;
-				}
-			}
-		}
 		// accuracy not improving .. slow learning
-		if (best_accuracy_count > 1)
+		if(_smart_train &&  (best_accuracy_count > 4))
 		{
-			set_learning_rate((0.9f)*get_learning_rate());
-			if(get_learning_rate()<0.000001f) set_learning_rate(0.000001f);
+			stuck_counter++;
+			set_learning_rate((0.5f)*get_learning_rate());
+			if (get_learning_rate() < 0.000001f)
+			{
+				heat_weights();
+				set_learning_rate(0.000001f);
+				stuck_counter++;// end of the line.. so speed up end
+			}
+			best_accuracy_count = 0;
 		}
 
 		old_estimated_accuracy = estimated_accuracy;
@@ -726,7 +726,8 @@ public:
 	// time to stop?
 	bool elvis_left_the_building()
 	{
-		if ((epoch_count>max_epochs) || (best_accuracy_count > 8)) return true;
+		// 2 stuck x 4 non best accuracy to quit = 8 times no improvement 
+		if ((epoch_count>max_epochs) || (stuck_counter > 3)) return true;
 		else return false;
 	}
 
@@ -744,6 +745,7 @@ public:
 		{
 			best_estimated_accuracy = (float)train_correct;
 			best_accuracy_count = 0;
+			stuck_counter = 0;
 		}
 		else best_accuracy_count++;
 
@@ -781,7 +783,11 @@ public:
 					_running_E.clear();
 				}
 			}
-			if (E>0 && E<_skip_energy_level) train_skipped++;
+			if (E > 0 && E < _skip_energy_level)
+			{
+				//std::cout << "E=" << E;
+				train_skipped++;
+			}
 
 		}  // omp critical
 
@@ -836,10 +842,10 @@ public:
 		float cost_activation_type = 0;
 		if ((std::string("sigmoid").compare(layer->p_act->name) == 0) &&
 			(std::string("cross_entropy").compare(_cost_function->name) == 0)) 
-			cost_activation_type = 2;
+			cost_activation_type = 1;
 		else if ((std::string("tanh").compare(layer->p_act->name) == 0) &&
 			(std::string("cross_entropy").compare(_cost_function->name) == 0)) 
-			cost_activation_type = 1;
+			cost_activation_type = 2;
 	
 		for (int j = 0; j < layer_node_size; j++)
 		{
@@ -859,11 +865,11 @@ public:
 		if (E != E) bail("network blew up - try lowering learning rate\n");
 		
 		// critical section in here, blocking update
-		//bool match = false;
-		//if ((max_j_target == max_j_out)) match = true;
-		update_smart_train(E, (max_j_target == max_j_out));
+		bool match = false;
+		if ((max_j_target == max_j_out)) match = true;
+		update_smart_train(E, match);
 
-		if (E>0 && E<_skip_energy_level && _smart_train)
+		if (E>0 && E<_skip_energy_level && _smart_train && match)
 		{
 			lock_batch();
 			batch_open[my_batch_index] = BATCH_FREE;

@@ -1,4 +1,4 @@
-// == uCNN ====================================================================
+// == ucnn ====================================================================
 //
 //    Copyright (c) gnawice@gnawice.com. All rights reserved.
 //	  See LICENSE in root folder
@@ -21,7 +21,7 @@
 //
 //    optimizer.h: stochastic optimization approaches
 //
-// ==================================================================== uCNN ==
+// ==================================================================== ucnn ==
 
 #pragma once
 
@@ -89,7 +89,10 @@ public:
 	static const char *name(){return "adagrad";}
 
 	virtual ~adagrad(){__for__(auto g __in__ G1) delete g;}
-	virtual void push_back(int w, int h, int c) { G1.push_back(new matrix(w, h, c)); G1[G1.size() - 1]->fill(0); }
+	virtual void push_back(int w, int h, int c) {
+		G1.push_back(new matrix(w, h, c));
+	}// G1[G1.size() - 1]->fill(0);
+
 	
 	virtual void reset() { __for__(auto g __in__ G1) g->fill(0.f);}
 	virtual void increment_w(matrix *w,  int g, const matrix &dW)
@@ -152,7 +155,10 @@ public:
 		__for__(auto g __in__ G2) g->fill(0.f);
 	}
 
-	virtual void push_back(int w, int h, int c){G1.push_back(new matrix(w,h,c)); G1[G1.size() - 1]->fill(0); G2.push_back(new matrix(w,h,c)); G2[G2.size() - 1]->fill(0);
+	virtual void push_back(int w, int h, int c)
+	{
+		G1.push_back(new matrix(w,h,c)); G1[G1.size() - 1]->fill(0); 
+		G2.push_back(new matrix(w,h,c)); G2[G2.size() - 1]->fill(0);
 	}
 
 	virtual void increment_w(matrix *w,  int g, const matrix &dW)
