@@ -1,5 +1,7 @@
 # μcnn (micro convolutional neural network)
 
+μcnn is now replaced by [mojo cnn](https://github.com/gnawice/mojo-cnn). μcnn repo will not have further development.
+
 μcnn is an efficient C++ CNN implementation that was built with the goal to balance hack-ability, functionality, and speed.  Consisting of only a handful of header files, μcnn is in portable C++ with old fashioned C tricks for optimization. With optional OpenMP and SSE3 speedups enabled it's speed is competitive with other CPU based CNN frameworks. Being a minimal CPU solution, it is not designed to scale over a cluster to train very deep models (for that, go with GPUs and Caffe, TensorFlow, CMTK, Torch, etc…)
 
 The μcnn API provides a 'smart training' option which abstracts the management of the training process but still provides the flexibility to handle the threading and input data as you'd like. Just make a loop and pass in training samples until μcnn says stop. On the standard MNIST handwritten digit database, μcnn's 'smart training' gives 99% accuracy in about a 20 seconds. 
